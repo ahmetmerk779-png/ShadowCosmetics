@@ -206,10 +206,6 @@ public final class CosmeticsScreen extends Screen {
         return super.mouseClicked(click, doubled);
     }
 
-    private static boolean isInside(TextFieldWidget field, double x, double y) {
-        return field != null && field.visible && x >= field.getX() && x <= field.getX() + field.getWidth()
-                && y >= field.getY() && y <= field.getY() + field.getHeight();
-    }
 
     @Override
     public boolean mouseDragged(Click click, double offsetX, double offsetY) {
