@@ -1,3 +1,4 @@
+
 package dev.shadowcosmetics;
 
 import net.minecraft.client.MinecraftClient;
@@ -87,35 +88,20 @@ public final class CosmeticsScreen extends Screen {
 
         y += 34;
 
-        addButton(
-                "‹ PREVIOUS",
-                left,
-                y,
-                half,
-                22,
-                b -> {
-                    if (!results.isEmpty()) {
-                        selectedResult = Math.floorMod(
-                                selectedResult - 1,
-                                results.size()
-                        );
-                    }
-                }
-        );
+        addButton("‹ PREVIOUS", left, y, half, 22, b -> {
+            if (!results.isEmpty()) {
+                selectedResult = Math.floorMod(
+                        selectedResult - 1,
+                        results.size()
+                );
+            }
+        });
 
-        addButton(
-                "NEXT ›",
-                left + half + gap,
-                y,
-                half,
-                22,
-                b -> {
-                    if (!results.isEmpty()) {
-                        selectedResult =
-                                (selectedResult + 1) % results.size();
-                    }
-                }
-        );
+        addButton("NEXT ›", left + half + gap, y, half, 22, b -> {
+            if (!results.isEmpty()) {
+                selectedResult = (selectedResult + 1) % results.size();
+            }
+        });
 
         y += 28;
 
@@ -132,63 +118,27 @@ public final class CosmeticsScreen extends Screen {
 
         y = section("YOUR COSMETICS", left, y, inner);
 
-        addButton(
-                capeLabel(),
-                left,
-                y,
-                half,
-                24,
-                b -> {
-                    CosmeticState.capeEnabled =
-                            !CosmeticState.capeEnabled;
+        addButton(capeLabel(), left, y, half, 24, b -> {
+            CosmeticState.capeEnabled = !CosmeticState.capeEnabled;
+            b.setMessage(capeLabel());
+        });
 
-                    b.setMessage(capeLabel());
-                }
-        );
-
-        addButton(
-                hatLabel(),
-                left + half + gap,
-                y,
-                half,
-                24,
-                b -> {
-                    CosmeticState.hatEnabled =
-                            !CosmeticState.hatEnabled;
-
-                    b.setMessage(hatLabel());
-                }
-        );
+        addButton(hatLabel(), left + half + gap, y, half, 24, b -> {
+            CosmeticState.hatEnabled = !CosmeticState.hatEnabled;
+            b.setMessage(hatLabel());
+        });
 
         y += 30;
 
-        addButton(
-                wingsLabel(),
-                left,
-                y,
-                half,
-                24,
-                b -> {
-                    CosmeticState.wingsEnabled =
-                            !CosmeticState.wingsEnabled;
+        addButton(wingsLabel(), left, y, half, 24, b -> {
+            CosmeticState.wingsEnabled = !CosmeticState.wingsEnabled;
+            b.setMessage(wingsLabel());
+        });
 
-                    b.setMessage(wingsLabel());
-                }
-        );
-
-        addButton(
-                haloLabel(),
-                left + half + gap,
-                y,
-                half,
-                24,
-                b -> {
-                    CosmeticState.haloEnabled =
-                            !CosmeticState.haloEnabled;
-
-                    b.setMessage(haloLabel());
-                }
-        );
+        addButton(haloLabel(), left + half + gap, y, half, 24, b -> {
+            CosmeticState.haloEnabled = !CosmeticState.haloEnabled;
+            b.setMessage(haloLabel());
+        });
 
         y += 30;
 
@@ -203,9 +153,9 @@ public final class CosmeticsScreen extends Screen {
                             (CosmeticState.capeIndex + 1)
                                     % CosmeticState.CAPES.length;
 
-                    b.setMessage(
-                            Text.literal("CAPE STYLE: " + currentCape())
-                    );
+                    b.setMessage(Text.literal(
+                            "CAPE STYLE: " + currentCape()
+                    ));
                 }
         );
 
@@ -220,37 +170,30 @@ public final class CosmeticsScreen extends Screen {
                             (CosmeticState.hatIndex + 1)
                                     % CosmeticState.HATS.length;
 
-                    b.setMessage(
-                            Text.literal("HAT STYLE: " + currentHat())
-                    );
+                    b.setMessage(Text.literal(
+                            "HAT STYLE: " + currentHat()
+                    ));
                 }
         );
 
         y += 30;
 
-        addButton(
-                customCapeLabel(),
-                left,
-                y,
-                inner,
-                24,
-                b -> {
-                    CosmeticState.customCapeEnabled =
-                            !CosmeticState.customCapeEnabled;
+        addButton(customCapeLabel(), left, y, inner, 24, b -> {
+            CosmeticState.customCapeEnabled =
+                    !CosmeticState.customCapeEnabled;
 
-                    if (CosmeticState.customCapeEnabled
-                            && !CosmeticState.customCapePath.isBlank()) {
+            if (CosmeticState.customCapeEnabled
+                    && !CosmeticState.customCapePath.isBlank()) {
 
-                        status = "Custom cape equipped. Press F5 to preview.";
+                status = "Custom cape equipped. Press F5 to preview.";
 
-                    } else {
-                        CosmeticState.customCapeEnabled = false;
-                        status = "Built-in cape selected.";
-                    }
+            } else {
+                CosmeticState.customCapeEnabled = false;
+                status = "Built-in cape selected.";
+            }
 
-                    b.setMessage(customCapeLabel());
-                }
-        );
+            b.setMessage(customCapeLabel());
+        });
 
         y += 38;
 
@@ -333,10 +276,10 @@ public final class CosmeticsScreen extends Screen {
     ) {
         addDrawableChild(widget);
         widgetBaseY.put(widget, baseY);
-
         return widget;
     }
 
+    // String alan butonlar
     private ButtonWidget addButton(
             String label,
             int x,
@@ -353,6 +296,23 @@ public final class CosmeticsScreen extends Screen {
         return add(button, y);
     }
 
+    // Text alan butonlar - derleme hatasının düzeltmesi
+    private ButtonWidget addButton(
+            Text label,
+            int x,
+            int y,
+            int w,
+            int h,
+            java.util.function.Consumer<ButtonWidget> action
+    ) {
+        ButtonWidget button = ButtonWidget.builder(
+                label,
+                action::accept
+        ).dimensions(x, y, w, h).build();
+
+        return add(button, y);
+    }
+
     private void updateWidgetPositions() {
         for (var entry : widgetBaseY.entrySet()) {
             ClickableWidget widget = entry.getKey();
@@ -363,7 +323,7 @@ public final class CosmeticsScreen extends Screen {
 
             boolean visible =
                     y + widget.getHeight() > contentTop
-                    && y < contentBottom;
+                            && y < contentBottom;
 
             widget.visible = visible;
             widget.active = visible;
@@ -377,13 +337,12 @@ public final class CosmeticsScreen extends Screen {
             double horizontalAmount,
             double verticalAmount
     ) {
-        if (
-                mouseX >= panelLeft
+        if (mouseX >= panelLeft
                 && mouseX <= panelRight
                 && mouseY >= contentTop
                 && mouseY <= contentBottom
-                && maxScroll > 0
-        ) {
+                && maxScroll > 0) {
+
             scrollOffset = Math.max(
                     0,
                     Math.min(
@@ -393,7 +352,6 @@ public final class CosmeticsScreen extends Screen {
             );
 
             updateWidgetPositions();
-
             return true;
         }
 
@@ -430,7 +388,7 @@ public final class CosmeticsScreen extends Screen {
                     status = found.isEmpty()
                             ? "No compatible 64x32 / 64x64 PNG found. Try another term."
                             : "Found " + found.size()
-                                    + " compatible PNG file(s).";
+                            + " compatible PNG file(s).";
                 });
 
             } catch (Exception e) {
@@ -465,7 +423,6 @@ public final class CosmeticsScreen extends Screen {
 
                 MinecraftClient.getInstance().execute(() -> {
                     CosmeticState.setCustomCape(saved);
-
                     status = "Downloaded and equipped. Press F5 to preview.";
                 });
 
