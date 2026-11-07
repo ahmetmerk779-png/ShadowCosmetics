@@ -1,4 +1,3 @@
-
 package dev.shadowcosmetics;
 
 import net.minecraft.client.MinecraftClient;
@@ -18,7 +17,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-/** Loads the selected local cape PNG as a live Minecraft texture. */
+/**
+ * Loads custom cape textures from local PNG files.
+ * Texture operations are performed on Minecraft's render thread.
+ */
 public final class CosmeticTextureManager {
 
     private static String loadedPath = "";
@@ -30,6 +32,7 @@ public final class CosmeticTextureManager {
 
     public static Model<Unit> getCustomCapeModel() {
         if (!CosmeticState.customCapeEnabled
+                || CosmeticState.customCapePath == null
                 || CosmeticState.customCapePath.isBlank()) {
             return null;
         }
@@ -61,6 +64,8 @@ public final class CosmeticTextureManager {
                 image.close();
                 return null;
             }
+
+            invalidate();
 
             NativeImageBackedTexture texture =
                     new NativeImageBackedTexture(
@@ -96,6 +101,9 @@ public final class CosmeticTextureManager {
         return textureId;
     }
 
+    /**
+     * Unloads the currently registered texture.
+     */
     public static void invalidate() {
         MinecraftClient client = MinecraftClient.getInstance();
 
@@ -108,39 +116,70 @@ public final class CosmeticTextureManager {
         capeModel = null;
     }
 
+    /**
+     * Creates the 3D cape geometry.
+     */
     private static ModelPart createCapeGeometry(int textureHeight) {
         ModelData data = new ModelData();
         ModelPartData root = data.getRoot();
 
         root.addChild(
                 "cape_main",
-                ModelPartBuilder.create().uv(0, 0)
-                        .cuboid(-5.0F, 0.0F, 2.2F,
-                                10.0F, 12.0F, 0.65F),
+                ModelPartBuilder.create()
+                        .uv(0, 0)
+                        .cuboid(
+                                -5.0F,
+                                0.0F,
+                                2.2F,
+                                10.0F,
+                                12.0F,
+                                0.65F
+                        ),
                 ModelTransform.NONE
         );
 
         root.addChild(
                 "cape_mantle",
-                ModelPartBuilder.create().uv(0, 14)
-                        .cuboid(-5.2F, -0.2F, 2.0F,
-                                10.4F, 2.0F, 1.0F),
+                ModelPartBuilder.create()
+                        .uv(0, 14)
+                        .cuboid(
+                                -5.2F,
+                                -0.2F,
+                                2.0F,
+                                10.4F,
+                                2.0F,
+                                1.0F
+                        ),
                 ModelTransform.NONE
         );
 
         root.addChild(
                 "cape_left_trim",
-                ModelPartBuilder.create().uv(24, 14)
-                        .cuboid(-5.0F, 1.0F, 2.91F,
-                                0.55F, 10.5F, 0.12F),
+                ModelPartBuilder.create()
+                        .uv(24, 14)
+                        .cuboid(
+                                -5.0F,
+                                1.0F,
+                                2.91F,
+                                0.55F,
+                                10.5F,
+                                0.12F
+                        ),
                 ModelTransform.NONE
         );
 
         root.addChild(
                 "cape_right_trim",
-                ModelPartBuilder.create().uv(24, 14)
-                        .cuboid(4.45F, 1.0F, 2.91F,
-                                0.55F, 10.5F, 0.12F),
+                ModelPartBuilder.create()
+                        .uv(24, 14)
+                        .cuboid(
+                                4.45F,
+                                1.0F,
+                                2.91F,
+                                0.55F,
+                                10.5F,
+                                0.12F
+                        ),
                 ModelTransform.NONE
         );
 
