@@ -1,6 +1,7 @@
 package dev.shadowcosmetics;
 
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
@@ -183,38 +184,47 @@ public final class CosmeticsScreen extends Screen {
     }
 
     @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button == 0 && mouseX >= panelLeft && mouseX <= panelRight && mouseY >= contentTop && mouseY <= contentBottom) {
+    public boolean mouseClicked(Click click, boolean doubled) {
+        double mouseX = click.x();
+        double mouseY = click.y();
+        if (click.button() == 0 && mouseX >= panelLeft && mouseX <= panelRight
+                && mouseY >= contentTop && mouseY <= contentBottom) {
             if (isInside(searchField, mouseX, mouseY) || isInside(fileField, mouseX, mouseY)) {
-                return super.mouseClicked(mouseX, mouseY, button);
+                return super.mouseClicked(click, doubled);
             }
             for (ActionButton item : buttons) {
                 int drawY = item.y - scrollOffset;
-                if (mouseX >= item.x && mouseX <= item.x + item.width && mouseY >= drawY && mouseY <= drawY + item.height) {
+                if (mouseX >= item.x && mouseX <= item.x + item.width
+                        && mouseY >= drawY && mouseY <= drawY + item.height) {
                     item.action.run();
                     return true;
                 }
             }
             draggingContent = maxScroll > 0;
-            lastDragY = mouseY;
+            return draggingContent || super.mouseClicked(click, doubled);
         }
-        return super.mouseClicked(mouseX, mouseY, button);
+        return super.mouseClicked(click, doubled);
+    }
+
+    private static boolean isInside(TextFieldWidget field, double x, double y) {
+        return field != null && field.visible && x >= field.getX() && x <= field.getX() + field.getWidth()
+                && y >= field.getY() && y <= field.getY() + field.getHeight();
     }
 
     @Override
-    public boolean mouseDragged(double mouseX, double mouseY, int button, double deltaX, double deltaY) {
-        if (draggingContent && button == 0) {
-            changeScroll((int) -Math.round(mouseY - lastDragY));
-            lastDragY = mouseY;
+    public boolean mouseDragged(Click click, double offsetX, double offsetY) {
+        if (draggingContent && click.button() == 0) {
+            changeScroll((int) -Math.round(offsetY));
             return true;
         }
-        return super.mouseDragged(mouseX, mouseY, button, deltaX, deltaY);
+        return super.mouseDragged(click, offsetX, offsetY);
     }
 
     @Override
-    public boolean mouseReleased(double mouseX, double mouseY, int button) {
+    public boolean mouseReleased(Click click) {
+        boolean wasDragging = draggingContent;
         draggingContent = false;
-        return super.mouseReleased(mouseX, mouseY, button);
+        return wasDragging || super.mouseReleased(click);
     }
 
     private void searchOnline() {
