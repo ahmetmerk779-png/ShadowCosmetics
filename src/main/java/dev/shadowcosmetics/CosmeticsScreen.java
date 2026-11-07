@@ -44,6 +44,8 @@ public final class CosmeticsScreen extends Screen {
     private int contentHeight, maxScroll;
     private boolean draggingContent = false;
     private double lastDragY;
+    private int searchBaseY;
+    private int fileBaseY;
 
     public CosmeticsScreen() {
         super(Text.literal("SHADOW COSMETICS"));
@@ -53,6 +55,7 @@ public final class CosmeticsScreen extends Screen {
     protected void init() {
         buttons.clear();
         sectionLabels.clear();
+        sectionTitles.clear();
 
         int panelWidth = Math.min(500, Math.max(260, width - 16));
         panelLeft = (width - panelWidth) / 2;
@@ -67,6 +70,7 @@ public final class CosmeticsScreen extends Screen {
         int y = contentTop + 12;
 
         int searchButtonWidth = Math.min(82, Math.max(66, inner / 4));
+        searchBaseY = y;
         searchField = new TextFieldWidget(textRenderer, left, y, inner - searchButtonWidth - 8, 24, Text.literal("Search capes"));
         searchField.setMaxLength(80);
         addDrawableChild(searchField);
@@ -114,6 +118,7 @@ public final class CosmeticsScreen extends Screen {
 
         y = section("IMPORT A PNG CAPE", left, y, inner);
         int importButtonWidth = Math.min(82, Math.max(66, inner / 4));
+        fileBaseY = y;
         fileField = new TextFieldWidget(textRenderer, left, y, inner - importButtonWidth - 8, 24, Text.literal("PNG file path"));
         fileField.setMaxLength(240);
         addDrawableChild(fileField);
@@ -154,13 +159,8 @@ public final class CosmeticsScreen extends Screen {
     private final List<String> sectionTitles = new ArrayList<>();
 
     private void updateFieldPositions() {
-        if (searchField != null) searchField.setY(contentTop + 12 - scrollOffset);
-        if (fileField != null) {
-            int inner = panelRight - panelLeft - 32;
-            int importWidth = Math.min(82, Math.max(66, inner / 4));
-            int y = contentTop + 12 + 36 + 34 + 30 + 42 + 22 + 36 + 36 + 36 + 36 + 42 + 22;
-            fileField.setY(y - scrollOffset);
-        }
+        if (searchField != null) searchField.setY(searchBaseY - scrollOffset);
+        if (fileField != null) fileField.setY(fileBaseY - scrollOffset);
     }
 
     private void changeScroll(int amount) {
@@ -177,9 +177,17 @@ public final class CosmeticsScreen extends Screen {
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
     }
 
+    private static boolean isInside(TextFieldWidget field, double x, double y) {
+        return field != null && field.visible && x >= field.getX() && x <= field.getX() + field.getWidth()
+                && y >= field.getY() && y <= field.getY() + field.getHeight();
+    }
+
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
         if (button == 0 && mouseX >= panelLeft && mouseX <= panelRight && mouseY >= contentTop && mouseY <= contentBottom) {
+            if (isInside(searchField, mouseX, mouseY) || isInside(fileField, mouseX, mouseY)) {
+                return super.mouseClicked(mouseX, mouseY, button);
+            }
             for (ActionButton item : buttons) {
                 int drawY = item.y - scrollOffset;
                 if (mouseX >= item.x && mouseX <= item.x + item.width && mouseY >= drawY && mouseY <= drawY + item.height) {
