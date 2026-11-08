@@ -3,436 +3,204 @@ package dev.shadowcosmetics;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.text.Text;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Touch-friendly PNG file browser for Android and desktop launchers.
+ * Folders open on tap; PNG files show their size and are imported on tap.
  */
-public final class CosmeticFilePickerScreen extends Screen {
+public final class CosmeticFilePickerScreen extends ScrollableScreen {
 
-    private Path currentDirectory;
-
-    private String message =
-            "Choose a PNG cape (64x32 or 64x64).";
+    private static final String P = "shadowcosmetics.";
+    private static final int MAX_ENTRIES = 300;
+    private static final int ROW = 28;
 
     private final Screen parent;
 
-    private final List<Path> entries = new ArrayList<>();
-
-    private static final int PURPLE = 0xFFB78CFF;
-    private static final int PANEL = 0xF0141420;
-    private static final int CARD = 0xFF20202D;
-
-    private int scrollOffset = 0;
-    private int maxScroll = 0;
-
-    private int panelLeft;
-    private int panelRight;
-    private int listTop;
-    private int listBottom;
+    private Path currentDirectory;
 
     public CosmeticFilePickerScreen(Screen parent) {
-        super(Text.literal("Choose Cosmetic PNG"));
+        super(net.minecraft.text.Text.literal("Shadow File Picker"));
 
         this.parent = parent;
         this.currentDirectory = defaultDirectory();
+        this.status = Lang.tr(P + "picker.choose");
     }
 
     private static Path defaultDirectory() {
-        Path androidDownloads =
-                Path.of("/storage/emulated/0/Download");
+        for (String candidate : new String[]{
+                "/storage/emulated/0/Download", "/sdcard/Download"}) {
+            Path path = Path.of(candidate);
 
-        if (Files.isDirectory(androidDownloads)) {
-            return androidDownloads;
+            if (Files.isDirectory(path)) {
+                return path;
+            }
         }
 
-        Path sharedDownloads =
-                Path.of("/sdcard/Download");
+        Path home = Path.of(System.getProperty("user.home", "."));
+        Path downloads = home.resolve("Downloads");
 
-        if (Files.isDirectory(sharedDownloads)) {
-            return sharedDownloads;
-        }
-
-        return Path.of(
-                System.getProperty("user.home", ".")
-        );
+        return Files.isDirectory(downloads) ? downloads : home;
     }
+
+    // ------------------------------------------------------------------
+    // Header
+    // ------------------------------------------------------------------
+
+    @Override
+    protected String headerTitle() {
+        return Lang.tr(P + "picker.title");
+    }
+
+    @Override
+    protected String headerSubtitle() {
+        int characters = Math.max(15, (panelRight - panelLeft - 40) / 6);
+
+        return CapeFormat.ellipsizeStart(currentDirectory.toString(), characters);
+    }
+
+    // ------------------------------------------------------------------
+    // Layout
+    // ------------------------------------------------------------------
 
     @Override
     protected void init() {
-        clearChildren();
+        buttons.clear();
+        armedKey = null;
 
-        int panelWidth = Math.min(
-                440,
-                Math.max(260, width - 16)
-        );
+        layoutFrame(440);
 
-        panelLeft = (width - panelWidth) / 2;
-        panelRight = panelLeft + panelWidth;
+        int inner = panelRight - panelLeft - 32;
+        int left = panelLeft + 16;
+        int gap = 6;
+        int third = (inner - 2 * gap) / 3;
+        int y = contentTop + 10;
 
-        int inner = panelWidth - 24;
-        int left = panelLeft + 12;
+        addBtn(left, y, third, 26, "‹ " + Lang.tr(P + "picker.up"), this::goUp);
+        addBtn(left + third + gap, y, third, 26, Lang.tr(P + "picker.refresh"), this::reload);
+        addBtn(left + 2 * (third + gap), y, third, 26, Lang.tr(P + "picker.cancel"), this::close);
+        y += 34;
 
-        int buttonWidth = (inner - 8) / 2;
+        List<Path> entries = new ArrayList<>();
+        boolean readable = listEntries(entries);
 
-        addDrawableChild(
-                ButtonWidget.builder(
-                        Text.literal("‹ UP ONE FOLDER"),
-                        button -> goUp()
-                )
-                .dimensions(left, 54, buttonWidth, 24)
-                .build()
-        );
-
-        addDrawableChild(
-                ButtonWidget.builder(
-                        Text.literal("REFRESH"),
-                        button -> refresh()
-                )
-                .dimensions(
-                        left + buttonWidth + 8,
-                        54,
-                        buttonWidth,
-                        24
-                )
-                .build()
-        );
-
-        listTop = 88;
-        listBottom = Math.max(listTop + 40, height - 54);
-
-        refreshEntries();
-
-        int itemHeight = 29;
-        int visibleHeight = listBottom - listTop;
-
-        int totalHeight = entries.size() * itemHeight;
-
-        maxScroll = Math.max(
-                0,
-                totalHeight - visibleHeight
-        );
-
-        scrollOffset = Math.min(scrollOffset, maxScroll);
-
-        updateEntries();
-    }
-
-    private void refreshEntries() {
-        entries.clear();
-
-        try {
-            if (!Files.isDirectory(currentDirectory)) {
-                message = "Folder is not accessible.";
-                return;
-            }
-
-            try (var stream = Files.list(currentDirectory)) {
-                stream
-                        .filter(path ->
-                                Files.isDirectory(path)
-                                || path.getFileName()
-                                        .toString()
-                                        .toLowerCase()
-                                        .endsWith(".png")
-                        )
-                        .sorted((a, b) -> {
-                            boolean aDirectory =
-                                    Files.isDirectory(a);
-
-                            boolean bDirectory =
-                                    Files.isDirectory(b);
-
-                            if (aDirectory != bDirectory) {
-                                return aDirectory ? -1 : 1;
-                            }
-
-                            return a.getFileName()
-                                    .toString()
-                                    .compareToIgnoreCase(
-                                            b.getFileName().toString()
-                                    );
-                        })
-                        .limit(100)
-                        .forEach(entries::add);
-            }
-
-            message = entries.isEmpty()
-                    ? "No folders or PNG files here."
-                    : "Tap a folder or PNG file.";
-
-        } catch (IOException | SecurityException exception) {
-            message =
-                    "Cannot read folder. Check storage permission.";
-        }
-    }
-
-    private void updateEntries() {
-        clearChildren();
-
-        int itemHeight = 29;
-        int left = panelLeft + 12;
-        int itemWidth = panelRight - panelLeft - 24;
-
-        for (int i = 0; i < entries.size(); i++) {
-            Path entry = entries.get(i);
-
-            int y = listTop + i * itemHeight - scrollOffset;
-
-            if (y + 25 < listTop || y > listBottom) {
-                continue;
-            }
-
+        for (Path entry : entries) {
             boolean directory = Files.isDirectory(entry);
-
             String name = entry.getFileName().toString();
 
-            String label = directory
-                    ? "📁  " + name
-                    : "PNG  " + name;
+            if (directory) {
+                addBtn(left, y, inner, 24, "▸  " + name, () -> open(entry));
+            } else {
+                int[] size = CosmeticLibrary.peekSize(entry);
+                boolean valid = size != null && CapeFormat.isValidSize(size[0], size[1]);
+                String label = "PNG  " + name + "  ·  " + CapeFormat.sizeLabel(size);
 
-            int maxCharacters = Math.max(
-                    12,
-                    (itemWidth - 12) / 6
-            );
-
-            if (label.length() > maxCharacters) {
-                label = label.substring(
-                        0,
-                        maxCharacters - 3
-                ) + "...";
+                addBtn(left, y, inner, 24, () -> label, () -> valid, null,
+                        () -> choose(entry));
             }
 
-            Path selected = entry;
-
-            addDrawableChild(
-                    ButtonWidget.builder(
-                            Text.literal(label),
-                            button -> select(selected, directory)
-                    )
-                    .dimensions(
-                            left,
-                            y,
-                            itemWidth,
-                            24
-                    )
-                    .build()
-            );
+            y += ROW;
         }
 
-        int cancelY = height - 38;
+        if (!readable) {
+            setStatus(Lang.tr(P + "picker.cannot_read"), true);
+        } else if (entries.isEmpty()) {
+            setStatus(Lang.tr(P + "picker.empty"), false);
+        } else if (entries.size() >= MAX_ENTRIES) {
+            setStatus(Lang.tr(P + "picker.limit", MAX_ENTRIES), false);
+        } else if (statusIsError || status.isEmpty()) {
+            setStatus(Lang.tr(P + "picker.choose"), false);
+        }
 
-        addDrawableChild(
-                ButtonWidget.builder(
-                        Text.literal("CANCEL"),
-                        button -> MinecraftClient.getInstance()
-                                .setScreen(parent)
-                )
-                .dimensions(
-                        width / 2 - 55,
-                        cancelY,
-                        110,
-                        24
-                )
-                .build()
-        );
+        finishLayout(y + 8 - contentTop);
     }
 
-    private void refresh() {
-        refreshEntries();
+    /** Fills {@code out} with folders first, then PNG files. False when unreadable. */
+    private boolean listEntries(List<Path> out) {
+        if (!Files.isDirectory(currentDirectory)) {
+            return false;
+        }
+
+        try (var stream = Files.list(currentDirectory)) {
+            stream.filter(path -> !hidden(path))
+                    .filter(path -> Files.isDirectory(path) || isPng(path))
+                    .sorted(Comparator
+                            .comparing((Path path) -> !Files.isDirectory(path))
+                            .thenComparing(path -> path.getFileName().toString(),
+                                    String.CASE_INSENSITIVE_ORDER))
+                    .limit(MAX_ENTRIES)
+                    .forEach(out::add);
+
+            return true;
+        } catch (IOException | RuntimeException exception) {
+            return false;
+        }
+    }
+
+    private static boolean hidden(Path path) {
+        Path name = path.getFileName();
+
+        return name == null || name.toString().startsWith(".");
+    }
+
+    private static boolean isPng(Path path) {
+        return path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".png")
+                && Files.isRegularFile(path);
+    }
+
+    // ------------------------------------------------------------------
+    // Actions
+    // ------------------------------------------------------------------
+
+    private void reload() {
+        clearChildren();
         init();
     }
 
-    private void goUp() {
-        Path parentPath = currentDirectory.getParent();
-
-        if (parentPath != null) {
-            currentDirectory = parentPath;
-            scrollOffset = 0;
-        }
-
-        refresh();
+    private void open(Path directory) {
+        currentDirectory = directory;
+        scrollOffset = 0;
+        reload();
     }
 
-    private void select(Path path, boolean directory) {
-        if (directory) {
-            currentDirectory = path;
-            scrollOffset = 0;
-            refresh();
-            return;
-        }
+    private void goUp() {
+        Path up = currentDirectory.getParent();
 
+        if (up != null) {
+            open(up);
+        }
+    }
+
+    private void choose(Path file) {
         try {
-            Path imported = CosmeticLibrary.importPng(path);
+            Path imported = CosmeticLibrary.importPng(file);
 
             CosmeticState.setCustomCape(imported);
-
             MinecraftClient.getInstance().setScreen(parent);
-
-        } catch (Exception exception) {
-            message = "Import failed: " + exception.getMessage();
+        } catch (IOException | RuntimeException exception) {
+            setStatus(Lang.tr(P + "ui.import_failed", Lang.describe(exception)), true);
         }
     }
 
     @Override
-    public boolean mouseScrolled(
-            double mouseX,
-            double mouseY,
-            double horizontalAmount,
-            double verticalAmount
-    ) {
-        if (mouseX >= panelLeft
-                && mouseX <= panelRight
-                && mouseY >= listTop
-                && mouseY <= listBottom
-                && maxScroll > 0) {
-
-            scrollOffset = Math.max(
-                    0,
-                    Math.min(
-                            maxScroll,
-                            scrollOffset - (int) (verticalAmount * 25)
-                    )
-            );
-
-            updateEntries();
-
-            return true;
-        }
-
-        return super.mouseScrolled(
-                mouseX,
-                mouseY,
-                horizontalAmount,
-                verticalAmount
-        );
+    public void close() {
+        MinecraftClient.getInstance().setScreen(parent);
     }
 
     @Override
-    public void render(
-            DrawContext context,
-            int mouseX,
-            int mouseY,
-            float delta
-    ) {
-        renderBackground(context, mouseX, mouseY, delta);
-
-        context.fill(
-                panelLeft,
-                8,
-                panelRight,
-                height - 8,
-                PANEL
-        );
-
-        context.fill(
-                panelLeft,
-                8,
-                panelRight,
-                44,
-                0xFF191925
-        );
-
-        context.drawCenteredTextWithShadow(
-                textRenderer,
-                Text.literal("SHADOW FILE PICKER"),
-                width / 2,
-                19,
-                0xFFFFFFFF
-        );
-
-        String path = currentDirectory.toString();
-
-        int maxPathLength = Math.max(
-                15,
-                (panelRight - panelLeft - 24) / 6
-        );
-
-        if (path.length() > maxPathLength) {
-            path = "..." + path.substring(
-                    path.length() - maxPathLength + 3
-            );
-        }
-
-        context.drawCenteredTextWithShadow(
-                textRenderer,
-                Text.literal(path),
-                width / 2,
-                39,
-                PURPLE
-        );
-
-        context.fill(
-                panelLeft + 8,
-                listTop - 4,
-                panelRight - 8,
-                listBottom + 2,
-                CARD
-        );
-
-        context.enableScissor(
-                panelLeft + 8,
-                listTop,
-                panelRight - 8,
-                listBottom
-        );
-
-        super.render(context, mouseX, mouseY, delta);
-
-        context.disableScissor();
-
-        if (maxScroll > 0) {
-            int trackTop = listTop + 3;
-            int trackBottom = listBottom - 3;
-            int trackHeight = trackBottom - trackTop;
-
-            int contentHeight = entries.size() * 29;
-
-            int thumbHeight = Math.max(
-                    18,
-                    trackHeight * trackHeight
-                            / Math.max(trackHeight, contentHeight)
-            );
-
-            int thumbY = trackTop
-                    + (trackHeight - thumbHeight)
-                    * scrollOffset / maxScroll;
-
-            context.fill(
-                    panelRight - 7,
-                    trackTop,
-                    panelRight - 4,
-                    trackBottom,
-                    0xFF373744
-            );
-
-            context.fill(
-                    panelRight - 7,
-                    thumbY,
-                    panelRight - 4,
-                    thumbY + thumbHeight,
-                    PURPLE
-            );
-        }
-
-        context.drawCenteredTextWithShadow(
-                textRenderer,
-                Text.literal(message),
-                width / 2,
-                height - 19,
-                0xFFE8D7FF
-        );
+    protected void onTap(double x, double y) {
+        tapButtons(x, y);
     }
 
     @Override
-    public boolean shouldPause() {
-        return false;
+    protected void renderContent(DrawContext context, int mouseX, int mouseY) {
+        drawButtons(context, mouseX, mouseY);
     }
 }

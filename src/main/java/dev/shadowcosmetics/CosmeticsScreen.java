@@ -1,372 +1,574 @@
 package dev.shadowcosmetics;
 
 import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.text.Text;
 
+import java.io.IOException;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.function.Supplier;
 
-public final class CosmeticsScreen extends Screen {
-    private static final int PURPLE = 0xFFB994FF;
-    private static final int BG = 0xF00C0D14;
-    private static final int PANEL = 0xFF171923;
-    private static final int CARD = 0xFF202331;
-    private static final int CARD_HOVER = 0xFF2B2E40;
-    private static final int BORDER = 0xFF34384A;
-    private static final int MUTED = 0xFF969BAE;
-    private static final int WHITE = 0xFFF3F1FA;
+/** Main Shadow Cosmetics menu: gallery search, saved capes, toggles and import. */
+public final class CosmeticsScreen extends ScrollableScreen {
 
-    private static final class ActionButton {
-        final int x, y, width, height;
-        final Supplier<String> label;
-        final Runnable action;
-        ActionButton(int x, int y, int width, int height, Supplier<String> label, Runnable action) {
-            this.x = x; this.y = y; this.width = width; this.height = height;
-            this.label = label; this.action = action;
-        }
+    private static final String P = "shadowcosmetics.";
+    private static final int MAX_LIBRARY_ROWS = 30;
+    private static final int ROW = 26;
+
+    private TextFieldWidget searchField;
+    private TextFieldWidget importField;
+
+    private String searchText = "";
+    private String importText = "";
+
+    private int searchFieldY;
+    private int importFieldY;
+
+    /** Section headings and plain text lines, in unscrolled content coordinates. */
+    private record Label(int x, int y, String text, int color, boolean section) {
     }
 
-    private String status = "READY  •  LOCAL COSMETICS";
-    private TextFieldWidget searchField;
-    private TextFieldWidget fileField;
-    private final List<ActionButton> buttons = new ArrayList<>();
-    private final List<int[]> sectionLabels = new ArrayList<>();
+    private final java.util.List<Label> labels = new java.util.ArrayList<>();
+
     private volatile List<CosmeticLibrary.Result> results = List.of();
-    private volatile boolean searching = false;
+    private volatile boolean busy = false;
+    private volatile int requestId = 0;
     private int selectedResult = 0;
-    private int scrollOffset = 0;
-    private int panelLeft, panelRight, contentTop, contentBottom;
-    private int contentHeight, maxScroll;
-    private boolean draggingContent = false;
-    private double lastDragY;
-    private int searchBaseY;
-    private int fileBaseY;
+
+    private int resultLabelY;
+    private String shownTextureError = "";
 
     public CosmeticsScreen() {
-        super(Text.literal("SHADOW COSMETICS"));
+        super(Text.literal("Shadow Cosmetics"));
+        status = Lang.tr(P + "ui.ready");
     }
+
+    // ------------------------------------------------------------------
+    // Header
+    // ------------------------------------------------------------------
+
+    @Override
+    protected String headerTitle() {
+        return Lang.tr(P + "ui.title");
+    }
+
+    @Override
+    protected String headerSubtitle() {
+        return Lang.tr(P + "ui.subtitle");
+    }
+
+    @Override
+    protected String headerRight() {
+        return "FABRIC / 1.21.11";
+    }
+
+    // ------------------------------------------------------------------
+    // Layout
+    // ------------------------------------------------------------------
 
     @Override
     protected void init() {
         buttons.clear();
-        sectionLabels.clear();
-        sectionTitles.clear();
+        labels.clear();
+        armedKey = null;
 
-        int panelWidth = Math.min(500, Math.max(260, width - 16));
-        panelLeft = (width - panelWidth) / 2;
-        panelRight = panelLeft + panelWidth;
-        contentTop = 61;
-        contentBottom = Math.max(contentTop + 64, height - 42);
+        layoutFrame(500);
 
-        int inner = panelWidth - 32;
+        int inner = panelRight - panelLeft - 32;
         int left = panelLeft + 16;
         int gap = 8;
         int half = (inner - gap) / 2;
+        int right = left + half + gap;
         int y = contentTop + 12;
 
-        int searchButtonWidth = Math.min(82, Math.max(66, inner / 4));
-        searchBaseY = y;
-        searchField = new TextFieldWidget(textRenderer, left, y, inner - searchButtonWidth - 8, 24, Text.literal("Search capes"));
+        // ---- Online gallery -------------------------------------------
+        y = section(Lang.tr(P + "section.gallery"), left, y);
+
+        int smallWidth = Math.min(86, Math.max(66, inner / 4));
+
+        searchFieldY = y;
+        searchField = new TextFieldWidget(textRenderer, left, y,
+                inner - smallWidth - gap, 24, Text.literal("search"));
         searchField.setMaxLength(80);
+        searchField.setPlaceholder(Text.literal(Lang.tr(P + "ui.search_hint")));
+        searchField.setText(searchText);
         addDrawableChild(searchField);
-        addButton("SEARCH", left + inner - searchButtonWidth, y, searchButtonWidth, 24, this::searchOnline);
-        y += 36;
 
-        addButton("‹  PREVIOUS", left, y, half, 26, () -> {
-            if (!results.isEmpty()) selectedResult = Math.floorMod(selectedResult - 1, results.size());
-        });
-        addButton("NEXT  ›", left + half + gap, y, half, 26, () -> {
-            if (!results.isEmpty()) selectedResult = (selectedResult + 1) % results.size();
-        });
+        addBtn(left + inner - smallWidth, y, smallWidth, 24,
+                () -> Lang.tr(P + "ui.search"), () -> !busy, null, this::searchOnline);
+        y += 32;
+
+        addBtn(left, y, half, 26, "‹  " + Lang.tr(P + "ui.previous"), () -> moveSelection(-1));
+        addBtn(right, y, half, 26, Lang.tr(P + "ui.next") + "  ›", () -> moveSelection(1));
+        y += 32;
+
+        addBtn(left, y, half, 28, () -> Lang.tr(P + "ui.popular"),
+                () -> !busy, null, this::loadPopular);
+        addBtn(right, y, half, 28, () -> Lang.tr(P + "ui.download"),
+                () -> !results.isEmpty(), null, this::downloadSelected);
         y += 34;
-        addButton("↓   DOWNLOAD & EQUIP SELECTED", left, y, inner, 30, this::downloadSelected);
-        y += 42;
 
-        y = section("YOUR COSMETICS", left, y, inner);
-        addButton(() -> toggleLabel("CAPE", CosmeticState.capeEnabled), left, y, half, 29,
-                () -> CosmeticState.capeEnabled = !CosmeticState.capeEnabled);
-        addButton(() -> toggleLabel("HAT", CosmeticState.hatEnabled), left + half + gap, y, half, 29,
-                () -> CosmeticState.hatEnabled = !CosmeticState.hatEnabled);
-        y += 36;
-        addButton(() -> toggleLabel("WINGS", CosmeticState.wingsEnabled), left, y, half, 29,
-                () -> CosmeticState.wingsEnabled = !CosmeticState.wingsEnabled);
-        addButton(() -> toggleLabel("HALO", CosmeticState.haloEnabled), left + half + gap, y, half, 29,
-                () -> CosmeticState.haloEnabled = !CosmeticState.haloEnabled);
-        y += 36;
-        addButton(() -> "CAPE STYLE   ·   " + currentCape(), left, y, half, 29, () -> {
-            CosmeticState.capeIndex = (CosmeticState.capeIndex + 1) % CosmeticState.CAPES.length;
-        });
-        addButton(() -> "HAT STYLE   ·   " + currentHat(), left + half + gap, y, half, 29, () -> {
-            CosmeticState.hatIndex = (CosmeticState.hatIndex + 1) % CosmeticState.HATS.length;
-        });
-        y += 36;
-        addButton(() -> toggleLabel("CUSTOM PNG CAPE", CosmeticState.customCapeEnabled), left, y, inner, 29, () -> {
-            CosmeticState.customCapeEnabled = !CosmeticState.customCapeEnabled;
-            if (CosmeticState.customCapeEnabled && !CosmeticState.customCapePath.isBlank()) {
-                status = "Custom cape equipped. Press F5 to preview.";
-            } else {
-                CosmeticState.customCapeEnabled = false;
-                status = "Choose a custom cape first.";
+        resultLabelY = y;
+        y += 22;
+
+        // ---- Saved capes ----------------------------------------------
+        y = section(Lang.tr(P + "section.library"), left, y);
+
+        List<Path> library = CosmeticLibrary.listLibrary();
+
+        if (library.isEmpty()) {
+            labels.add(new Label(left, y + 2, Lang.tr(P + "ui.library_empty"), MUTED, false));
+            y += 24;
+        } else {
+            int shown = Math.min(library.size(), MAX_LIBRARY_ROWS);
+            int deleteWidth = 34;
+
+            for (int i = 0; i < shown; i++) {
+                Path file = library.get(i);
+                String name = CapeFormat.ellipsizeEnd(
+                        CapeFormat.baseName(file.getFileName().toString()), 26);
+                int[] size = CosmeticLibrary.peekSize(file);
+                String text = name + "  ·  " + CapeFormat.sizeLabel(size);
+                boolean valid = size != null && CapeFormat.isValidSize(size[0], size[1]);
+                String key = "delete:" + file;
+
+                addBtn(left, y, inner - deleteWidth - 4, 24,
+                        () -> (isEquipped(file) ? "●  " : "") + text,
+                        () -> valid, null, () -> equip(file));
+
+                addBtn(left + inner - deleteWidth, y, deleteWidth, 24,
+                        () -> key.equals(armedKey) ? "?" : "✕",
+                        () -> true, key,
+                        () -> confirmOrArm(key, () -> deleteSaved(file)));
+                y += ROW;
             }
-        });
-        y += 42;
 
-        y = section("IMPORT A PNG CAPE", left, y, inner);
-        int importButtonWidth = Math.min(82, Math.max(66, inner / 4));
-        fileBaseY = y;
-        fileField = new TextFieldWidget(textRenderer, left, y, inner - importButtonWidth - 8, 24, Text.literal("PNG file path"));
-        fileField.setMaxLength(240);
-        addDrawableChild(fileField);
-        addButton("IMPORT", left + inner - importButtonWidth, y, importButtonWidth, 24, this::importFile);
+            if (library.size() > shown) {
+                labels.add(new Label(left, y + 2,
+                        Lang.tr(P + "ui.library_more", library.size() - shown), MUTED, false));
+                y += 20;
+            }
+
+            y += 4;
+        }
+
+        addBtn(left, y, inner, 28, () -> Lang.tr(P + "ui.remove_custom"),
+                CosmeticState::hasCustomCape, null, this::removeCustomCape);
+        y += 40;
+
+        // ---- Toggles ---------------------------------------------------
+        y = section(Lang.tr(P + "section.cosmetics"), left, y);
+
+        addToggle(left, y, inner, "ui.master", () -> CosmeticState.masterEnabled,
+                v -> CosmeticState.masterEnabled = v);
         y += 34;
-        addButton("▣   BROWSE DEVICE FOLDER", left, y, inner, 29,
-                () -> MinecraftClient.getInstance().setScreen(new CosmeticFilePickerScreen(this)));
+
+        addToggle(left, y, half, "ui.cape", () -> CosmeticState.capeEnabled,
+                v -> CosmeticState.capeEnabled = v);
+        addToggle(right, y, half, "ui.hat", () -> CosmeticState.hatEnabled,
+                v -> CosmeticState.hatEnabled = v);
+        y += 34;
+
+        addToggle(left, y, half, "ui.wings", () -> CosmeticState.wingsEnabled,
+                v -> CosmeticState.wingsEnabled = v);
+        addToggle(right, y, half, "ui.halo", () -> CosmeticState.haloEnabled,
+                v -> CosmeticState.haloEnabled = v);
+        y += 34;
+
+        addToggle(left, y, half, "ui.animations", () -> CosmeticState.animationsEnabled,
+                v -> CosmeticState.animationsEnabled = v);
+        addBtn(right, y, half, 28,
+                () -> toggleLabel(Lang.tr(P + "ui.custom_cape"), CosmeticState.customCapeEnabled),
+                () -> true, null, this::toggleCustomCape);
+        y += 34;
+
+        addBtn(left, y, half, 28,
+                () -> Lang.tr(P + "ui.cape_style", CosmeticState.CAPES[
+                        Math.floorMod(CosmeticState.capeIndex, CosmeticState.CAPES.length)]),
+                () -> true, null, () -> change(CosmeticState::cycleCape));
+        addBtn(right, y, half, 28,
+                () -> Lang.tr(P + "ui.hat_style", CosmeticState.HATS[
+                        Math.floorMod(CosmeticState.hatIndex, CosmeticState.HATS.length)]),
+                () -> true, null, () -> change(CosmeticState::cycleHat));
+        y += 34;
+
+        addBtn(left, y, inner, 28,
+                () -> Lang.tr(P + "ui.accent",
+                        Lang.tr(P + "accent." + Math.floorMod(
+                                CosmeticState.accentIndex, CosmeticState.ACCENTS.length))),
+                () -> true, null, () -> change(CosmeticState::cycleAccent));
         y += 42;
 
-        y = section("ONLINE GALLERY", left, y, inner);
-        addButton("OPEN COSMETIC LIBRARY FOLDER", left, y, inner, 29,
-                () -> status = "Library folder: " + CosmeticLibrary.libraryDirectory());
+        // ---- Import ----------------------------------------------------
+        y = section(Lang.tr(P + "section.import"), left, y);
 
-        contentHeight = y + 36 - contentTop;
-        maxScroll = Math.max(0, contentHeight - (contentBottom - contentTop));
-        scrollOffset = Math.min(scrollOffset, maxScroll);
-        updateFieldPositions();
+        importFieldY = y;
+        importField = new TextFieldWidget(textRenderer, left, y,
+                inner - smallWidth - gap, 24, Text.literal("path"));
+        importField.setMaxLength(240);
+        importField.setPlaceholder(Text.literal(Lang.tr(P + "ui.import_hint")));
+        importField.setText(importText);
+        addDrawableChild(importField);
+
+        addBtn(left + inner - smallWidth, y, smallWidth, 24,
+                () -> Lang.tr(P + "ui.import"), () -> true, null, this::importFile);
+        y += 32;
+
+        addBtn(left, y, inner, 28, "▣   " + Lang.tr(P + "ui.browse"), () -> {
+            rememberText();
+            MinecraftClient.getInstance().setScreen(new CosmeticFilePickerScreen(this));
+        });
+        y += 40;
+
+        // ---- Footer ----------------------------------------------------
+        addBtn(left, y, half, 28, Lang.tr(P + "ui.library_folder"),
+                () -> setStatus(Lang.tr(P + "ui.library_path",
+                        CosmeticLibrary.libraryDirectory().toString()), false));
+
+        String resetKey = "reset";
+        addBtn(right, y, half, 28,
+                () -> resetKey.equals(armedKey)
+                        ? Lang.tr(P + "ui.reset_confirm") : Lang.tr(P + "ui.reset"),
+                () -> true, resetKey,
+                () -> confirmOrArm(resetKey, this::resetAll));
+        y += 28;
+
+        finishLayout(y + 16 - contentTop);
     }
 
-    private static String toggleLabel(String name, boolean enabled) {
-        return (enabled ? "●  " : "○  ") + name + (enabled ? "   ON" : "   OFF");
-    }
-
-    private void addButton(String label, int x, int y, int w, int h, Runnable action) {
-        addButton(() -> label, x, y, w, h, action);
-    }
-
-    private void addButton(Supplier<String> label, int x, int y, int w, int h, Runnable action) {
-        buttons.add(new ActionButton(x, y, w, h, label, action));
-    }
-
-    private int section(String title, int x, int y, int w) {
-        sectionLabels.add(new int[]{x, y, w, title.hashCode()});
-        sectionTitles.add(title);
+    private int section(String title, int x, int y) {
+        labels.add(new Label(x, y, title, PURPLE, true));
         return y + 22;
     }
 
-    private final List<String> sectionTitles = new ArrayList<>();
-
-    private void updateFieldPositions() {
-        if (searchField != null) searchField.setY(searchBaseY - scrollOffset);
-        if (fileField != null) fileField.setY(fileBaseY - scrollOffset);
+    private void addToggle(int x, int y, int w, String key,
+                           java.util.function.BooleanSupplier getter,
+                           java.util.function.Consumer<Boolean> setter) {
+        addBtn(x, y, w, 28,
+                () -> toggleLabel(Lang.tr(P + key), getter.getAsBoolean()),
+                () -> true, null,
+                () -> change(() -> setter.accept(!getter.getAsBoolean())));
     }
 
-    private void changeScroll(int amount) {
-        scrollOffset = Math.max(0, Math.min(maxScroll, scrollOffset + amount));
-        updateFieldPositions();
+    private static String toggleLabel(String name, boolean enabled) {
+        return (enabled ? "●  " : "○  ") + name + "   "
+                + Lang.tr(P + (enabled ? "ui.on" : "ui.off"));
+    }
+
+    // ------------------------------------------------------------------
+    // Scrolling text fields
+    // ------------------------------------------------------------------
+
+    @Override
+    protected void onScrolled() {
+        position(searchField, searchFieldY);
+        position(importField, importFieldY);
+    }
+
+    private void position(TextFieldWidget field, int baseY) {
+        if (field == null) {
+            return;
+        }
+
+        int y = baseY - scrollOffset;
+
+        field.setY(y);
+        field.visible = y + field.getHeight() > contentTop && y < contentBottom;
     }
 
     @Override
-    public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-        if (mouseX >= panelLeft && mouseX <= panelRight && mouseY >= contentTop && mouseY <= contentBottom && maxScroll > 0) {
-            changeScroll((int) (-verticalAmount * 28));
-            return true;
-        }
-        return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
+    protected boolean isWidgetAt(double x, double y) {
+        return hits(searchField, x, y) || hits(importField, x, y);
     }
 
-    private static boolean isInside(TextFieldWidget field, double x, double y) {
-        return field != null && field.visible && x >= field.getX() && x <= field.getX() + field.getWidth()
+    private static boolean hits(TextFieldWidget field, double x, double y) {
+        return field != null && field.visible
+                && x >= field.getX() && x <= field.getX() + field.getWidth()
                 && y >= field.getY() && y <= field.getY() + field.getHeight();
     }
 
-    @Override
-    public boolean mouseClicked(Click click, boolean doubled) {
-        double mouseX = click.x();
-        double mouseY = click.y();
-        if (click.button() == 0 && mouseX >= panelLeft && mouseX <= panelRight
-                && mouseY >= contentTop && mouseY <= contentBottom) {
-            if (isInside(searchField, mouseX, mouseY) || isInside(fileField, mouseX, mouseY)) {
-                return super.mouseClicked(click, doubled);
-            }
-            for (ActionButton item : buttons) {
-                int drawY = item.y - scrollOffset;
-                if (mouseX >= item.x && mouseX <= item.x + item.width
-                        && mouseY >= drawY && mouseY <= drawY + item.height) {
-                    item.action.run();
-                    return true;
-                }
-            }
-            draggingContent = maxScroll > 0;
-            return draggingContent || super.mouseClicked(click, doubled);
+    private void rememberText() {
+        if (searchField != null) {
+            searchText = searchField.getText();
         }
-        return super.mouseClicked(click, doubled);
+
+        if (importField != null) {
+            importText = importField.getText();
+        }
     }
 
+    // ------------------------------------------------------------------
+    // Actions
+    // ------------------------------------------------------------------
 
-    @Override
-    public boolean mouseDragged(Click click, double offsetX, double offsetY) {
-        if (draggingContent && click.button() == 0) {
-            changeScroll((int) -Math.round(offsetY));
-            return true;
-        }
-        return super.mouseDragged(click, offsetX, offsetY);
+    private void change(Runnable action) {
+        action.run();
+        CosmeticState.save();
     }
 
-    @Override
-    public boolean mouseReleased(Click click) {
-        boolean wasDragging = draggingContent;
-        draggingContent = false;
-        return wasDragging || super.mouseReleased(click);
+    private void toggleCustomCape() {
+        if (!CosmeticState.hasCustomCape()) {
+            setStatus(Lang.tr(P + "ui.choose_first"), true);
+            return;
+        }
+
+        change(() -> CosmeticState.customCapeEnabled = !CosmeticState.customCapeEnabled);
+        setStatus(Lang.tr(P + (CosmeticState.customCapeEnabled
+                ? "ui.equipped" : "ui.custom_off")), false);
+    }
+
+    private boolean isEquipped(Path file) {
+        return CosmeticState.customCapeEnabled
+                && file.toAbsolutePath().normalize().toString()
+                .equals(CosmeticState.customCapePath);
+    }
+
+    private void equip(Path file) {
+        CosmeticState.setCustomCape(file);
+        setStatus(Lang.tr(P + "ui.equipped"), false);
+    }
+
+    private void deleteSaved(Path file) {
+        boolean wasEquipped = file.toAbsolutePath().normalize().toString()
+                .equals(CosmeticState.customCapePath);
+
+        try {
+            CosmeticLibrary.deleteFromLibrary(file);
+
+            if (wasEquipped) {
+                CosmeticState.clearCustomCape();
+            }
+
+            setStatus(Lang.tr(P + "ui.deleted", file.getFileName().toString()), false);
+        } catch (IOException | RuntimeException exception) {
+            setStatus(Lang.describe(exception), true);
+        }
+
+        rebuild();
+    }
+
+    private void removeCustomCape() {
+        CosmeticState.clearCustomCape();
+        setStatus(Lang.tr(P + "ui.custom_removed"), false);
+    }
+
+    private void resetAll() {
+        CosmeticState.resetDefaults();
+        setStatus(Lang.tr(P + "ui.reset_done"), false);
+    }
+
+    private void moveSelection(int step) {
+        List<CosmeticLibrary.Result> current = results;
+
+        if (!current.isEmpty()) {
+            selectedResult = Math.floorMod(selectedResult + step, current.size());
+        }
     }
 
     private void searchOnline() {
         String query = searchField.getText().trim();
+
         if (query.isEmpty()) {
-            status = "Type a search term first.";
+            setStatus(Lang.tr(P + "ui.type_search"), true);
             return;
         }
-        searching = true;
-        status = "Searching online gallery...";
+
+        runSearch(() -> CosmeticLibrary.searchOnline(query));
+    }
+
+    private void loadPopular() {
+        runSearch(CosmeticLibrary::popular);
+    }
+
+    private interface SearchCall {
+        List<CosmeticLibrary.Result> run() throws IOException;
+    }
+
+    private void runSearch(SearchCall call) {
+        int id = ++requestId;
+
+        busy = true;
         results = List.of();
         selectedResult = 0;
-        Thread thread = new Thread(() -> {
+        setStatus(Lang.tr(P + "ui.searching"), false);
+
+        startThread("ShadowCosmetics-Search", () -> {
             try {
-                List<CosmeticLibrary.Result> found = CosmeticLibrary.searchOnline(query);
+                List<CosmeticLibrary.Result> found = call.run();
+
                 MinecraftClient.getInstance().execute(() -> {
+                    if (id != requestId) {
+                        return;
+                    }
+
                     results = found;
-                    searching = false;
-                    status = found.isEmpty()
-                            ? "No compatible 64x32 / 64x64 PNG found. Try another term."
-                            : "Found " + found.size() + " compatible PNG file(s).";
+                    busy = false;
+
+                    if (found.isEmpty()) {
+                        setStatus(Lang.tr(P + "ui.no_results"), true);
+                    } else {
+                        setStatus(Lang.tr(P + "ui.found", found.size()), false);
+                    }
                 });
-            } catch (Exception e) {
+            } catch (IOException | RuntimeException exception) {
                 MinecraftClient.getInstance().execute(() -> {
-                    searching = false;
-                    status = "Search failed: " + safeMessage(e);
+                    if (id != requestId) {
+                        return;
+                    }
+
+                    busy = false;
+                    setStatus(Lang.tr(P + "ui.search_failed", Lang.describe(exception)), true);
                 });
             }
-        }, "ShadowCosmetics-Search");
-        thread.setDaemon(true);
-        thread.start();
+        });
     }
 
     private void downloadSelected() {
-        if (results.isEmpty()) {
-            status = "Search and select a result first.";
+        List<CosmeticLibrary.Result> current = results;
+
+        if (current.isEmpty()) {
+            setStatus(Lang.tr(P + "ui.pick_result"), true);
             return;
         }
-        CosmeticLibrary.Result result = results.get(Math.min(selectedResult, results.size() - 1));
-        status = "Downloading: " + result.title();
-        Thread thread = new Thread(() -> {
+
+        CosmeticLibrary.Result result =
+                current.get(Math.min(selectedResult, current.size() - 1));
+
+        setStatus(Lang.tr(P + "ui.downloading", result.title()), false);
+
+        startThread("ShadowCosmetics-Download", () -> {
             try {
                 Path saved = CosmeticLibrary.download(result);
+
                 MinecraftClient.getInstance().execute(() -> {
                     CosmeticState.setCustomCape(saved);
-                    status = "Downloaded and equipped. Press F5 to preview.";
+                    setStatus(Lang.tr(P + "ui.equipped"), false);
+
+                    if (MinecraftClient.getInstance().currentScreen == this) {
+                        rebuild();
+                    }
                 });
-            } catch (Exception e) {
-                MinecraftClient.getInstance().execute(() -> status = "Download failed: " + safeMessage(e));
+            } catch (IOException | RuntimeException exception) {
+                MinecraftClient.getInstance().execute(() ->
+                        setStatus(Lang.tr(P + "ui.download_failed",
+                                Lang.describe(exception)), true));
             }
-        }, "ShadowCosmetics-Download");
+        });
+    }
+
+    private void importFile() {
+        String raw = importField.getText().trim();
+
+        if (raw.isEmpty()) {
+            setStatus(Lang.tr(P + "ui.import_empty"), true);
+            return;
+        }
+
+        try {
+            Path saved = CosmeticLibrary.importPng(Path.of(raw));
+            CosmeticState.setCustomCape(saved);
+            setStatus(Lang.tr(P + "ui.equipped"), false);
+            rebuild();
+        } catch (IOException | RuntimeException exception) {
+            setStatus(Lang.tr(P + "ui.import_failed", Lang.describe(exception)), true);
+        }
+    }
+
+    private static void startThread(String name, Runnable task) {
+        Thread thread = new Thread(task, name);
         thread.setDaemon(true);
         thread.start();
     }
 
-    private void importFile() {
-        String raw = fileField.getText().trim();
-        if (raw.isEmpty()) {
-            status = "Enter the full PNG file path.";
-            return;
-        }
-        try {
-            Path saved = CosmeticLibrary.importPng(Path.of(raw));
-            CosmeticState.setCustomCape(saved);
-            status = "Imported and equipped. Press F5 to preview.";
-        } catch (Exception e) {
-            status = "Import failed: " + safeMessage(e);
-        }
+    /** Re-creates the layout (for example after the saved capes changed). */
+    private void rebuild() {
+        rememberText();
+        clearChildren();
+        init();
     }
 
-    private static String safeMessage(Exception e) {
-        String message = e.getMessage();
-        if (message == null) return e.getClass().getSimpleName();
-        message = message.replace('\n', ' ');
-        return message.substring(0, Math.min(70, message.length()));
-    }
-
-    private static String currentCape() { return CosmeticState.CAPES[CosmeticState.capeIndex]; }
-    private static String currentHat() { return CosmeticState.HATS[CosmeticState.hatIndex]; }
+    // ------------------------------------------------------------------
+    // Frame hooks
+    // ------------------------------------------------------------------
 
     @Override
-    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        renderBackground(context, mouseX, mouseY, delta);
+    public void tick() {
+        super.tick();
 
-        context.fill(0, 0, width, height, 0x66070810);
-        context.fill(panelLeft, 8, panelRight, height - 8, BG);
-        context.fill(panelLeft, 8, panelRight, 54, PANEL);
-        context.fill(panelLeft, 8, panelLeft + 4, height - 8, PURPLE);
-        context.drawTextWithShadow(textRenderer, Text.literal("SHADOW"), panelLeft + 18, 17, WHITE);
-        context.drawTextWithShadow(textRenderer, Text.literal("COSMETIC STUDIO"), panelLeft + 18, 32, PURPLE);
-        context.drawTextWithShadow(textRenderer, Text.literal("FABRIC  /  1.21.11"), panelRight - 112, 24, MUTED);
+        // Surface cape load problems (wrong size, missing file) found by the renderer.
+        String error = CosmeticTextureManager.lastErrorKey();
 
-        context.fill(panelLeft + 10, contentTop - 5, panelRight - 10, contentBottom + 2, PANEL);
-        context.enableScissor(panelLeft + 5, contentTop, panelRight - 5, contentBottom);
+        if (!error.equals(shownTextureError)) {
+            shownTextureError = error;
 
-        for (int i = 0; i < sectionLabels.size(); i++) {
-            int[] section = sectionLabels.get(i);
-            int y = section[1] - scrollOffset;
-            if (y >= contentTop - 24 && y <= contentBottom) {
-                context.fill(section[0], y + 8, section[0] + 3, y + 19, PURPLE);
-                context.drawTextWithShadow(textRenderer, Text.literal(sectionTitles.get(i)), section[0] + 9, y + 7, PURPLE);
+            if (!error.isEmpty()) {
+                int[] size = CosmeticLibrary.peekSize(Path.of(CosmeticState.customCapePath));
+                setStatus(Lang.tr(error, CapeFormat.sizeLabel(size)), true);
+            }
+        }
+    }
+
+    @Override
+    protected void onTap(double x, double y) {
+        tapButtons(x, y);
+    }
+
+    @Override
+    protected void renderContent(DrawContext context, int mouseX, int mouseY) {
+        for (Label label : labels) {
+            int y = label.y() - scrollOffset;
+
+            if (y < contentTop - 24 || y > contentBottom) {
+                continue;
+            }
+
+            if (label.section()) {
+                drawSectionTitle(context, label.x(), y, label.text());
+            } else {
+                context.drawTextWithShadow(textRenderer,
+                        Text.literal(fit(label.text(), panelRight - panelLeft - 40)),
+                        label.x(), y, label.color());
             }
         }
 
-        for (ActionButton item : buttons) {
-            int y = item.y - scrollOffset;
-            if (y + item.height < contentTop || y > contentBottom) continue;
-            boolean hover = mouseX >= item.x && mouseX <= item.x + item.width && mouseY >= y && mouseY <= y + item.height;
-            context.fill(item.x, y, item.x + item.width, y + item.height, hover ? CARD_HOVER : CARD);
-            context.fill(item.x, y, item.x + item.width, y + 1, hover ? PURPLE : BORDER);
-            context.fill(item.x, y + item.height - 1, item.x + item.width, y + item.height, BORDER);
-            String label = item.label.get();
-            int maxChars = Math.max(8, (item.width - 16) / 6);
-            if (label.length() > maxChars) label = label.substring(0, maxChars - 1) + "…";
-            context.drawCenteredTextWithShadow(textRenderer, Text.literal(label), item.x + item.width / 2, y + (item.height - 8) / 2, hover ? WHITE : 0xFFD8D9E4);
+        drawButtons(context, mouseX, mouseY);
+        drawResultLine(context);
+    }
+
+    private void drawResultLine(DrawContext context) {
+        int y = resultLabelY - scrollOffset;
+
+        if (y < contentTop - 12 || y > contentBottom) {
+            return;
         }
 
-        super.render(context, mouseX, mouseY, delta);
+        int x = panelLeft + 16;
+        int width = panelRight - panelLeft - 40;
+        List<CosmeticLibrary.Result> current = results;
+        String text;
+        int color;
 
-        if (!results.isEmpty()) {
-            CosmeticLibrary.Result chosen = results.get(Math.min(selectedResult, results.size() - 1));
-            String label = chosen.title().length() > 36 ? chosen.title().substring(0, 36) + "…" : chosen.title();
-            context.drawTextWithShadow(textRenderer, Text.literal("RESULT " + (selectedResult + 1) + "/" + results.size() + "  " + label),
-                    panelLeft + 16, contentBottom - 16, 0xFFE8D7FF);
-        } else if (searching) {
-            context.drawTextWithShadow(textRenderer, Text.literal("SEARCHING…"), panelLeft + 16, contentBottom - 16, PURPLE);
+        if (!current.isEmpty()) {
+            CosmeticLibrary.Result chosen =
+                    current.get(Math.min(selectedResult, current.size() - 1));
+            text = Lang.tr(P + "ui.result", selectedResult + 1, current.size(), chosen.title());
+            color = 0xFFE8D7FF;
+        } else if (busy) {
+            text = Lang.tr(P + "ui.searching");
+            color = PURPLE;
         } else {
-            context.drawTextWithShadow(textRenderer, Text.literal("SCROLL OR DRAG TO EXPLORE"), panelLeft + 16, contentBottom - 16, MUTED);
+            text = Lang.tr(P + "ui.scroll_hint");
+            color = MUTED;
         }
-        context.disableScissor();
 
-        context.fill(panelLeft, height - 34, panelRight, height - 8, PANEL);
-        String shown = status.length() > Math.max(12, (panelRight - panelLeft) / 5)
-                ? status.substring(0, Math.max(12, (panelRight - panelLeft) / 5) - 1) + "…" : status;
-        context.drawCenteredTextWithShadow(textRenderer, Text.literal(shown), width / 2, height - 24, PURPLE);
-
-        if (maxScroll > 0) {
-            int trackTop = contentTop + 4, trackBottom = contentBottom - 4;
-            int trackH = trackBottom - trackTop;
-            int thumbH = Math.max(22, trackH * trackH / Math.max(trackH, contentHeight));
-            int thumbY = trackTop + (trackH - thumbH) * scrollOffset / maxScroll;
-            context.fill(panelRight - 7, trackTop, panelRight - 4, trackBottom, BORDER);
-            context.fill(panelRight - 7, thumbY, panelRight - 4, thumbY + thumbH, PURPLE);
-        }
+        context.drawTextWithShadow(textRenderer, Text.literal(fit(text, width)), x, y + 4, color);
     }
 
     @Override
-    public boolean shouldPause() { return false; }
+    public void removed() {
+        rememberText();
+        CosmeticState.save();
+        super.removed();
+    }
 }
