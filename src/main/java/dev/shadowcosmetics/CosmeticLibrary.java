@@ -21,13 +21,17 @@ import java.util.HashSet;
 import java.util.List;
 
 /**
- * Online cosmetic discovery and local PNG import.
+ * Online cape discovery, local PNG import and the saved-cape library.
  * Uses HttpURLConnection for Android runtime compatibility.
  */
 public final class CosmeticLibrary {
 
-    private static final int MAX_FILE_SIZE = 8 * 1024 * 1024;
-    private static final int MAX_SEARCH_RESULTS = 12;
+    private static final int MAX_SEARCH_RESULTS = 16;
+    private static final int MAX_LIBRARY_ENTRIES = 200;
+
+    private static final String USER_AGENT =
+            "ShadowCosmetics/0.2 (Minecraft Fabric mod; "
+                    + "https://github.com/ahmetmerk779-png/ShadowCosmetics)";
 
     public record Result(String title, String imageUrl, String mime) {}
 
@@ -41,30 +45,43 @@ public final class CosmeticLibrary {
                 .resolve("cosmetics");
     }
 
-    /**
-     * Searches the community cape catalogue and Wikimedia Commons.
-     */
+    // ------------------------------------------------------------------
+    // Online search
+    // ------------------------------------------------------------------
+
+    /** Searches the community cape catalogue and Wikimedia Commons. */
     public static List<Result> searchOnline(String query) throws IOException {
         if (query == null || query.isBlank()) {
-            throw new IOException("Search query cannot be empty.");
+            throw new CosmeticException("shadowcosmetics.error.empty_query");
         }
 
         List<Result> combined = new ArrayList<>();
+        IOException catalogueFailure = null;
 
         try {
-            combined.addAll(searchCapeCatalogue(query));
-        } catch (IOException ignored) {
-            // Continue with Wikimedia Commons.
+            combined.addAll(searchCapeCatalogue(query.trim(), true));
+        } catch (IOException exception) {
+            catalogueFailure = exception;
         }
 
         try {
-            combined.addAll(searchCommons(query));
+            combined.addAll(searchCommons(query.trim()));
         } catch (IOException exception) {
+            // Only fail when neither source answered.
             if (combined.isEmpty()) {
-                throw exception;
+                throw catalogueFailure != null ? catalogueFailure : exception;
             }
         }
 
+        return unique(combined);
+    }
+
+    /** The most popular community capes (no search term). */
+    public static List<Result> popular() throws IOException {
+        return unique(searchCapeCatalogue("", false));
+    }
+
+    private static List<Result> unique(List<Result> combined) {
         List<Result> unique = new ArrayList<>();
         HashSet<String> seen = new HashSet<>();
 
@@ -81,21 +98,17 @@ public final class CosmeticLibrary {
         return unique;
     }
 
-    /**
-     * Searches a public community cape catalogue.
-     */
-    private static List<Result> searchCapeCatalogue(String query)
-            throws IOException {
+    /** Searches a public community cape catalogue. */
+    private static List<Result> searchCapeCatalogue(
+            String query,
+            boolean useSearchTerm
+    ) throws IOException {
 
-        String encoded = URLEncoder.encode(
-                query,
-                StandardCharsets.UTF_8
-        );
+        String address = "https://mc-api.bisai.dev/v1/capes?limit=12&sort=popular";
 
-        String address =
-                "https://mc-api.bisai.dev/v1/capes?search="
-                        + encoded
-                        + "&limit=12&sort=popular";
+        if (useSearchTerm) {
+            address += "&search=" + URLEncoder.encode(query, StandardCharsets.UTF_8);
+        }
 
         String body = getText(address, 15000);
 
@@ -104,7 +117,7 @@ public final class CosmeticLibrary {
         try {
             root = JsonParser.parseString(body).getAsJsonObject();
         } catch (RuntimeException exception) {
-            throw new IOException("Invalid cape catalogue response.", exception);
+            throw new CosmeticException("shadowcosmetics.error.bad_response");
         }
 
         List<Result> results = new ArrayList<>();
@@ -120,13 +133,8 @@ public final class CosmeticLibrary {
 
             JsonObject cape = element.getAsJsonObject();
 
-            String name = cape.has("name")
-                    ? cape.get("name").getAsString()
-                    : "Community Cape";
-
-            String imageUrl = cape.has("url")
-                    ? cape.get("url").getAsString()
-                    : "";
+            String name = stringOf(cape, "name", "Community Cape");
+            String imageUrl = stringOf(cape, "url", "");
 
             if (imageUrl.startsWith("/")) {
                 imageUrl = "https://mc-api.bisai.dev" + imageUrl;
@@ -144,27 +152,22 @@ public final class CosmeticLibrary {
         return results;
     }
 
-    /**
-     * Searches Wikimedia Commons for cape-compatible PNG files.
-     */
-    public static List<Result> searchCommons(String query)
-            throws IOException {
-
+    /** Searches Wikimedia Commons for cape-compatible PNG files. */
+    public static List<Result> searchCommons(String query) throws IOException {
         String encoded = URLEncoder.encode(
-                query,
+                query + " filetype:bitmap",
                 StandardCharsets.UTF_8
         );
 
-        String address =
-                "https://commons.wikimedia.org/w/api.php"
-                        + "?action=query"
-                        + "&generator=search"
-                        + "&gsrsearch=" + encoded
-                        + "&gsrnamespace=6"
-                        + "&gsrlimit=20"
-                        + "&prop=imageinfo"
-                        + "&iiprop=url%7Cmime%7Csize"
-                        + "&format=json";
+        String address = "https://commons.wikimedia.org/w/api.php"
+                + "?action=query"
+                + "&generator=search"
+                + "&gsrsearch=" + encoded
+                + "&gsrnamespace=6"
+                + "&gsrlimit=30"
+                + "&prop=imageinfo"
+                + "&iiprop=url%7Cmime%7Csize"
+                + "&format=json";
 
         String body = getText(address, 15000);
 
@@ -173,25 +176,26 @@ public final class CosmeticLibrary {
         try {
             root = JsonParser.parseString(body).getAsJsonObject();
         } catch (RuntimeException exception) {
-            throw new IOException("Invalid Wikimedia response.", exception);
+            throw new CosmeticException("shadowcosmetics.error.bad_response");
         }
 
         JsonObject pages = new JsonObject();
 
-        if (root.has("query")
-                && root.getAsJsonObject("query").has("pages")) {
-
-            pages = root.getAsJsonObject("query")
-                    .getAsJsonObject("pages");
+        if (root.has("query") && root.getAsJsonObject("query").has("pages")) {
+            pages = root.getAsJsonObject("query").getAsJsonObject("pages");
         }
 
         List<Result> results = new ArrayList<>();
 
         for (var entry : pages.entrySet()) {
+            if (!entry.getValue().isJsonObject()) {
+                continue;
+            }
+
             JsonObject page = entry.getValue().getAsJsonObject();
 
             if (!page.has("imageinfo")
-                    || !page.getAsJsonArray("imageinfo").isJsonArray()
+                    || !page.get("imageinfo").isJsonArray()
                     || page.getAsJsonArray("imageinfo").isEmpty()) {
                 continue;
             }
@@ -200,204 +204,223 @@ public final class CosmeticLibrary {
                     .get(0)
                     .getAsJsonObject();
 
-            String mime = info.has("mime")
-                    ? info.get("mime").getAsString()
-                    : "";
-
-            String imageUrl = info.has("url")
-                    ? info.get("url").getAsString()
-                    : "";
-
-            int width = info.has("width")
-                    ? info.get("width").getAsInt()
-                    : 0;
-
-            int height = info.has("height")
-                    ? info.get("height").getAsInt()
-                    : 0;
+            String mime = stringOf(info, "mime", "");
+            String imageUrl = stringOf(info, "url", "");
+            int width = intOf(info, "width");
+            int height = intOf(info, "height");
 
             if ("image/png".equalsIgnoreCase(mime)
                     && imageUrl.startsWith("https://")
-                    && width == 64
-                    && (height == 32 || height == 64)) {
-
-                String title = page.has("title")
-                        ? page.get("title").getAsString()
-                        : "Community Cape";
+                    && CapeFormat.isValidSize(width, height)) {
 
                 results.add(new Result(
-                        title,
+                        stringOf(page, "title", "Community Cape"),
                         imageUrl,
                         mime
                 ));
             }
         }
 
-        results.sort(
-                Comparator.comparing(
-                        Result::title,
-                        String.CASE_INSENSITIVE_ORDER
-                )
-        );
+        results.sort(Comparator.comparing(
+                Result::title,
+                String.CASE_INSENSITIVE_ORDER
+        ));
 
         return results;
     }
 
-    /**
-     * Downloads a selected cape and saves it to the local library.
-     */
+    // ------------------------------------------------------------------
+    // Download / import
+    // ------------------------------------------------------------------
+
+    /** Downloads a selected cape and saves it to the local library. */
     public static Path download(Result result) throws IOException {
         if (result == null) {
-            throw new IOException("No cosmetic selected.");
+            throw new CosmeticException("shadowcosmetics.error.no_selection");
         }
 
         if (!"image/png".equalsIgnoreCase(result.mime())) {
-            throw new IOException("Only PNG files are supported.");
+            throw new CosmeticException("shadowcosmetics.error.png_only");
         }
 
         if (!result.imageUrl().startsWith("https://")) {
-            throw new IOException("Only HTTPS downloads are supported.");
+            throw new CosmeticException("shadowcosmetics.error.https_only");
         }
 
         byte[] bytes = getBytes(
                 result.imageUrl(),
                 20000,
-                MAX_FILE_SIZE
+                CapeFormat.MAX_FILE_SIZE
         );
 
-        return savePng(
-                bytes,
-                safeName(result.title())
-        );
+        return savePng(bytes, result.title());
     }
 
     /**
-     * Imports a PNG from a local file path.
+     * Imports a PNG from a local file path into the library.
+     * A file that already lives in the library is used as it is.
      */
     public static Path importPng(Path source) throws IOException {
         if (source == null || !Files.isRegularFile(source)) {
-            throw new IOException("File not found.");
+            throw new CosmeticException("shadowcosmetics.error.file_missing");
+        }
+
+        if (isInLibrary(source)) {
+            validateCapePng(Files.readAllBytes(source));
+            return source;
         }
 
         long size = Files.size(source);
 
-        if (size <= 0 || size > MAX_FILE_SIZE) {
-            throw new IOException("PNG must be smaller than 8 MB.");
+        if (size <= 0) {
+            throw new CosmeticException("shadowcosmetics.error.empty_file");
         }
 
-        byte[] bytes = Files.readAllBytes(source);
+        if (size > CapeFormat.MAX_FILE_SIZE) {
+            throw new CosmeticException("shadowcosmetics.error.too_big");
+        }
 
         return savePng(
-                bytes,
-                safeName(source.getFileName().toString())
+                Files.readAllBytes(source),
+                source.getFileName().toString()
         );
     }
 
-    /**
-     * Lists PNG files in a local directory.
-     */
-    public static List<Path> listLocalPngs(Path directory)
-            throws IOException {
+    /** Saves a validated cape PNG into the cosmetic library. */
+    private static Path savePng(byte[] bytes, String title) throws IOException {
+        if (bytes == null || bytes.length == 0) {
+            throw new CosmeticException("shadowcosmetics.error.empty_file");
+        }
 
-        if (directory == null || !Files.isDirectory(directory)) {
-            throw new IOException("Folder not found or inaccessible.");
+        if (bytes.length > CapeFormat.MAX_FILE_SIZE) {
+            throw new CosmeticException("shadowcosmetics.error.too_big");
+        }
+
+        validateCapePng(bytes);
+
+        Path directory = libraryDirectory().toAbsolutePath().normalize();
+        Files.createDirectories(directory);
+
+        Path destination = directory
+                .resolve(CapeFormat.libraryFileName(title, bytes))
+                .normalize();
+
+        if (!directory.equals(destination.getParent())) {
+            throw new CosmeticException("shadowcosmetics.error.bad_name");
+        }
+
+        // Same content = same file name, so an identical cape is never stored twice.
+        if (!Files.isRegularFile(destination)) {
+            Files.write(destination, bytes);
+        }
+
+        return destination;
+    }
+
+    /** Checks that the data is a real PNG with a supported cape size. */
+    private static void validateCapePng(byte[] bytes) throws IOException {
+        if (!CapeFormat.isPng(bytes)) {
+            throw new CosmeticException("shadowcosmetics.error.not_png");
+        }
+
+        // Cheap header check first, so we can name the size in the message.
+        int[] headerSize = CapeFormat.readPngSize(bytes);
+
+        if (headerSize != null
+                && !CapeFormat.isValidSize(headerSize[0], headerSize[1])) {
+            throw new CosmeticException(
+                    "shadowcosmetics.error.bad_size",
+                    CapeFormat.sizeLabel(headerSize)
+            );
+        }
+
+        try (ByteArrayInputStream input = new ByteArrayInputStream(bytes);
+             NativeImage image = NativeImage.read(input)) {
+
+            if (!CapeFormat.isValidSize(image.getWidth(), image.getHeight())) {
+                throw new CosmeticException(
+                        "shadowcosmetics.error.bad_size",
+                        image.getWidth() + "x" + image.getHeight()
+                );
+            }
+
+        } catch (CosmeticException exception) {
+            throw exception;
+        } catch (IOException | RuntimeException exception) {
+            throw new CosmeticException("shadowcosmetics.error.bad_image");
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Saved capes (the library folder)
+    // ------------------------------------------------------------------
+
+    /** Saved capes, newest first. */
+    public static List<Path> listLibrary() {
+        Path directory = libraryDirectory();
+
+        if (!Files.isDirectory(directory)) {
+            return List.of();
         }
 
         try (var stream = Files.list(directory)) {
             return stream
                     .filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName()
-                            .toString()
-                            .toLowerCase()
-                            .endsWith(".png"))
-                    .sorted(
-                            Comparator.comparing(
-                                    path -> path.getFileName().toString(),
-                                    String.CASE_INSENSITIVE_ORDER
-                            )
-                    )
-                    .limit(40)
+                    .filter(path -> path.getFileName().toString()
+                            .toLowerCase().endsWith(".png"))
+                    .sorted(Comparator.comparingLong(
+                            CosmeticLibrary::lastModified
+                    ).reversed())
+                    .limit(MAX_LIBRARY_ENTRIES)
                     .toList();
+
+        } catch (IOException | RuntimeException exception) {
+            return List.of();
         }
     }
 
-    /**
-     * Saves a validated cape PNG into the cosmetic library.
-     */
-    private static Path savePng(byte[] bytes, String fileName)
-            throws IOException {
-
-        if (bytes == null || bytes.length == 0) {
-            throw new IOException("Downloaded file is empty.");
+    /** True when the file is directly inside the cape library folder. */
+    public static boolean isInLibrary(Path path) {
+        if (path == null) {
+            return false;
         }
 
-        if (bytes.length > MAX_FILE_SIZE) {
-            throw new IOException("Maximum file size is 8 MB.");
-        }
+        Path parent = path.toAbsolutePath().normalize().getParent();
 
-        validateCapePng(bytes);
-
-        Path directory = libraryDirectory();
-
-        Files.createDirectories(directory);
-
-        String safeFileName = safeName(fileName);
-
-        if (!safeFileName.toLowerCase().endsWith(".png")) {
-            safeFileName += ".png";
-        }
-
-        Path destination = directory.resolve(safeFileName)
-                .normalize();
-
-        if (!destination.getParent().equals(directory.normalize())) {
-            throw new IOException("Invalid file name.");
-        }
-
-        Files.write(destination, bytes);
-
-        return destination;
+        return parent != null
+                && parent.equals(libraryDirectory().toAbsolutePath().normalize());
     }
 
-    /**
-     * Checks that the image is a supported Minecraft cape texture.
-     */
-    private static void validateCapePng(byte[] bytes)
-            throws IOException {
+    /** Deletes a saved cape. Only files inside the library can be deleted. */
+    public static void deleteFromLibrary(Path path) throws IOException {
+        if (!isInLibrary(path)) {
+            throw new CosmeticException("shadowcosmetics.error.outside_library");
+        }
 
-        try (ByteArrayInputStream input =
-                     new ByteArrayInputStream(bytes)) {
+        Files.deleteIfExists(path);
+    }
 
-            NativeImage image = NativeImage.read(input);
+    /** Reads {width, height} from a PNG header; null if unreadable. */
+    public static int[] peekSize(Path path) {
+        try (InputStream input = Files.newInputStream(path)) {
+            return CapeFormat.readPngSize(input.readNBytes(33));
+        } catch (IOException | RuntimeException exception) {
+            return null;
+        }
+    }
 
-            if (image == null) {
-                throw new IOException("Invalid PNG image.");
-            }
-
-            try {
-                int width = image.getWidth();
-                int height = image.getHeight();
-
-                if (width != 64 || (height != 32 && height != 64)) {
-                    throw new IOException(
-                            "Cape PNG must be 64x32 or 64x64."
-                    );
-                }
-
-            } finally {
-                image.close();
-            }
-
+    private static long lastModified(Path path) {
+        try {
+            return Files.getLastModifiedTime(path).toMillis();
         } catch (IOException exception) {
-            throw exception;
-        } catch (Exception exception) {
-            throw new IOException("Could not read PNG image.", exception);
+            return 0L;
         }
     }
 
-    /**
-     * Android-compatible HTTP GET helper.
-     */
+    // ------------------------------------------------------------------
+    // HTTP helpers
+    // ------------------------------------------------------------------
+
     private static String getText(String address, int timeout)
             throws IOException {
 
@@ -407,56 +430,93 @@ public final class CosmeticLibrary {
         );
     }
 
-    /**
-     * Downloads bytes with connection and file-size limits.
-     */
+    /** GET with size limits. Retries once on rate limits and server errors. */
     private static byte[] getBytes(
             String address,
             int timeout,
             int maxBytes
     ) throws IOException {
 
-        HttpURLConnection connection =
-                (HttpURLConnection) new URL(address).openConnection();
+        try {
+            return fetchOnce(address, timeout, maxBytes);
+
+        } catch (CosmeticException exception) {
+            boolean retryable = "shadowcosmetics.error.http".equals(exception.key())
+                    && exception.args().length > 0
+                    && isRetryable(exception.args()[0]);
+
+            if (!retryable) {
+                throw exception;
+            }
+
+            pause(800);
+            return fetchOnce(address, timeout, maxBytes);
+        }
+    }
+
+    private static boolean isRetryable(Object code) {
+        String value = String.valueOf(code);
+        return value.equals("429") || value.startsWith("5");
+    }
+
+    private static void pause(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static byte[] fetchOnce(
+            String address,
+            int timeout,
+            int maxBytes
+    ) throws IOException {
+
+        HttpURLConnection connection;
+
+        try {
+            connection = (HttpURLConnection) new URL(address).openConnection();
+        } catch (IOException | ClassCastException exception) {
+            throw new CosmeticException(
+                    "shadowcosmetics.error.network",
+                    String.valueOf(exception.getMessage())
+            );
+        }
 
         connection.setConnectTimeout(10000);
         connection.setReadTimeout(timeout);
         connection.setRequestMethod("GET");
         connection.setInstanceFollowRedirects(true);
-
-        connection.setRequestProperty(
-                "User-Agent",
-                "ShadowCosmetics/1.1"
-        );
-
-        connection.setRequestProperty(
-                "Accept",
-                "application/json,image/png,*/*"
-        );
+        connection.setRequestProperty("User-Agent", USER_AGENT);
+        connection.setRequestProperty("Accept", "application/json,image/png,*/*");
 
         try {
             int responseCode = connection.getResponseCode();
 
             if (responseCode != HttpURLConnection.HTTP_OK) {
-                throw new IOException(
-                        "Server returned HTTP " + responseCode
+                throw new CosmeticException(
+                        "shadowcosmetics.error.http",
+                        String.valueOf(responseCode)
                 );
             }
 
-            try (
-                    InputStream input = connection.getInputStream();
-                    ByteArrayOutputStream output =
-                            new ByteArrayOutputStream()
-            ) {
+            long declared = connection.getContentLengthLong();
+
+            if (declared > maxBytes) {
+                throw new CosmeticException("shadowcosmetics.error.too_large_response");
+            }
+
+            try (InputStream input = connection.getInputStream();
+                 ByteArrayOutputStream output = new ByteArrayOutputStream()) {
 
                 byte[] buffer = new byte[8192];
-
                 int read;
 
                 while ((read = input.read(buffer)) != -1) {
                     if (output.size() + read > maxBytes) {
-                        throw new IOException(
-                                "Response exceeds size limit."
+                        throw new CosmeticException(
+                                "shadowcosmetics.error.too_large_response"
                         );
                     }
 
@@ -466,31 +526,40 @@ public final class CosmeticLibrary {
                 return output.toByteArray();
             }
 
+        } catch (CosmeticException exception) {
+            throw exception;
+        } catch (IOException exception) {
+            throw new CosmeticException(
+                    "shadowcosmetics.error.network",
+                    String.valueOf(exception.getMessage())
+            );
+
         } finally {
             connection.disconnect();
         }
     }
 
-    /**
-     * Removes unsafe characters from downloaded file names.
-     */
-    private static String safeName(String value) {
-        if (value == null || value.isBlank()) {
-            return "custom_cosmetic.png";
+    private static String stringOf(JsonObject object, String key, String fallback) {
+        try {
+            if (object.has(key) && object.get(key).isJsonPrimitive()) {
+                return object.get(key).getAsString();
+            }
+        } catch (RuntimeException ignored) {
+            // fall through
         }
 
-        String name = value
-                .replaceFirst("(?i)^File:", "")
-                .replaceAll("[^a-zA-Z0-9._-]", "_");
+        return fallback;
+    }
 
-        if (name.length() > 64) {
-            name = name.substring(0, 64);
+    private static int intOf(JsonObject object, String key) {
+        try {
+            if (object.has(key) && object.get(key).isJsonPrimitive()) {
+                return object.get(key).getAsInt();
+            }
+        } catch (RuntimeException ignored) {
+            // fall through
         }
 
-        if (name.isBlank()) {
-            return "custom_cosmetic.png";
-        }
-
-        return name;
+        return 0;
     }
 }

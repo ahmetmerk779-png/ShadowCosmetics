@@ -1,43 +1,60 @@
-# Shadow Cosmetics — Online Cape Search, Custom Upload & 3D Preview
+# Shadow Cosmetics
 
-Minecraft 1.21.11 Fabric client-side source project (Java 21).
+Client-side cosmetics for **Minecraft 1.21.11** (Fabric, Java 21): animated 3D capes, hats, wings and a halo, online cape search, PNG import and a touch-friendly menu that also works on Android launchers.
 
-## Added in this update
-- Online cape search against the public mc-api cape gallery and Wikimedia Commons PNG files.
-- Search result paging (previous/next) and selected-result download.
-- Only cape-atlas PNGs with dimensions 64x32 or 64x64 are accepted for applying.
-- Downloaded/imported PNGs are equipped as a real dynamic Minecraft texture on the existing 3D animated cape model.
-- Existing cape sway/flutter animation is retained for custom textures.
-- Android-friendly in-game file browser: Browse phone → open folders → tap a PNG. It starts at `/storage/emulated/0/Download` when accessible, with `/sdcard/Download` and the launcher home folder as fallbacks.
-- Custom cape selection is saved in `config/shadowcosmetics/active-cape.txt` and reloaded on next launch.
-- The existing original 3D crown, horns, halo and wings remain available.
+*Türkçe özet:* Minecraft 1.21.11 için istemci taraflı kozmetik modu. Animasyonlu 3D pelerinler, şapkalar, kanatlar, hale; çevrimiçi pelerin arama, PNG içe aktarma ve dokunmatik dostu menü. Arayüz Türkçe ve İngilizce.
+
+## Features
+- **Cosmetics:** 6 animated cape styles, 5 hats, wings and halo. A master switch, per-item toggles, an animation switch and an accent colour that recolours every cosmetic.
+- **Online cape search:** public cape gallery plus Wikimedia Commons, with *Popular* capes, previous/next browsing and one-tap *Download & equip*.
+- **Custom PNG capes:** any 64x32 or 64x64 cape atlas is rendered on the animated 3D cape model.
+- **My capes:** every downloaded or imported cape is kept in a library. Equip it again with one tap, delete it with a confirm tap.
+- **Device file browser:** hidden files are skipped, PNG sizes are shown and invalid sizes are greyed out.
+- **Everything is remembered:** all settings are saved to `config/shadowcosmetics/settings.properties` and restored on launch (older `active-cape.txt` files are migrated).
+- **Scrolling UI:** mouse wheel or drag. A press that does not move is a tap, so dragging over a button never presses it by accident.
+- **Languages:** English and Türkçe (`en_us`, `tr_tr`). Error messages are translated too.
 
 ## How to use
-1. Open the mod menu with Right Shift (or the configured keybind).
-2. Search for a cape name, e.g. `Müge cape`.
-3. Use Previous/Next Result and Download selected.
-4. Or use Browse phone and choose a local cape PNG.
-5. The selected cape is equipped automatically. Use F5 to see the 3D cape on your player.
-6. Toggle Custom PNG Cape off to return to the built-in animated cape designs.
+1. Press **Right Shift** (rebindable) to open the menu.
+2. Search for a cape or press *Popular*, pick a result with *Previous / Next* and press *Download & equip*.
+3. Or use *Browse device folder* / the path field to import a PNG.
+4. Press **F5** to see the cape on your player.
+5. Toggle *PNG cape* off, or *Use built-in cape*, to go back to the animated built-in capes.
 
 ## Texture format
 - PNG only, maximum 8 MB.
-- Cape atlas dimensions must be exactly 64x32 or 64x64 pixels.
-- Arbitrary pictures, JPEG, WebP and full 3D model files are not cape atlases and are rejected/not applied.
+- Cape atlas must be exactly **64x32** or **64x64** pixels. Other images, JPEG, WebP and 3D model files are rejected.
 
 ## Search sources and rights
-- The online search uses the public mc-api cape gallery and Wikimedia Commons; it is not a Google-wide crawler and may not contain every creator cape.
-- Results depend on those services being online and may be rate-limited.
-- Check the original creator's terms and the source's licence before using or redistributing a texture. The mod does not bypass access controls or download private assets.
+- Search uses the public mc-api cape gallery and Wikimedia Commons. It is not a web-wide crawler and may not contain every creator's cape.
+- Results depend on those services being online and may be rate limited.
+- Check the creator's terms and the source's licence before using or redistributing a texture. The mod does not bypass access controls or download private assets.
 
 ## Android file access
-The in-game browser reads paths exposed to the Minecraft process. On Android, access depends on the launcher and Android storage permissions. If the Download folder is not visible, grant the launcher file/media permission or use the path import field where supported.
+The in-game browser reads folders exposed to the Minecraft process. It starts in `/storage/emulated/0/Download` when accessible. If nothing is visible, grant the launcher file/media permission or paste the full path into the import field.
 
 ## Visibility
-Cosmetics are currently local-only. They render on your own player; this project does not send cosmetic data to Minecraft servers or automatically show custom capes to other players.
+Cosmetics are **local only**: they render on your own player. The mod sends no cosmetic data to servers and does not show your cape to other players.
 
 ## Build
-Requires JDK 21 and Gradle. Run `gradle build` in this folder. Output: `build/libs/`.
+Requires JDK 21.
 
-## Test status
-Source update only. The environment used to prepare this archive did not have Gradle installed, so the project has not been compiled or runtime-tested here. Verify with a Gradle build on a network-enabled machine before installing in Minecraft 1.21.11.
+```
+./gradlew build
+```
+
+The mod JAR is written to `build/libs/`. Unit tests (PNG header parsing, file naming, colour maths, settings storage) run with `./gradlew test`.
+GitHub Actions builds every push and pull request and uploads `ShadowCosmetics-1.21.11.jar` as an artifact.
+
+## Project layout
+| File | Purpose |
+| --- | --- |
+| `CosmeticsScreen`, `CosmeticFilePickerScreen`, `ScrollableScreen` | Menu, file browser and the shared touch-friendly frame |
+| `CosmeticState`, `CosmeticSettings` | Options and their persistence |
+| `CosmeticLibrary`, `CapeFormat` | Search, download, import, library and PNG validation |
+| `CosmeticTextureManager` | Loads the selected PNG as a dynamic texture and cape model |
+| `ShadowCosmeticFeatureRenderer`, `Colors` | Rendering of capes, hats, wings and halo |
+| `Lang`, `CosmeticException` | Translated messages and errors |
+
+## License
+MIT, see [LICENSE](LICENSE).

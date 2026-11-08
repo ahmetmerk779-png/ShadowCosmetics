@@ -2,7 +2,12 @@ name: Build ShadowCosmetics
 
 on:
   push:
+  pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -21,8 +26,17 @@ jobs:
           java-version: "21"
           cache: gradle
 
-      - name: Build Fabric mod
+      - name: Build Fabric mod and run tests
         run: ./gradlew --no-daemon build
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: build/reports/tests
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Verify and name mod JAR
         shell: bash

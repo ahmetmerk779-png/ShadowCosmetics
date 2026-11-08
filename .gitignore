@@ -1,0 +1,22 @@
+# Gradle
+.gradle/
+build/
+out/
+dist/
+
+# Loom / Minecraft dev runs
+run/
+.architectury-transformer/
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+bin/
+
+# OS
+.DS_Store
+Thumbs.db

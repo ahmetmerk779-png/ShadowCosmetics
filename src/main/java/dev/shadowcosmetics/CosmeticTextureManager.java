@@ -23,23 +23,34 @@ import java.nio.file.Path;
  */
 public final class CosmeticTextureManager {
 
+    private static final Identifier TEXTURE_ID =
+            Identifier.of("shadowcosmetics", "dynamic/custom_cape");
+
     private static String loadedPath = "";
     private static Identifier textureId;
     private static Model<Unit> capeModel;
+
+    /** A path that failed to load. Prevents re-reading a broken file every frame. */
+    private static String failedPath = "";
+    private static String lastError = "";
 
     private CosmeticTextureManager() {
     }
 
     public static Model<Unit> getCustomCapeModel() {
         if (!CosmeticState.customCapeEnabled
-                || CosmeticState.customCapePath == null
-                || CosmeticState.customCapePath.isBlank()) {
+                || !CosmeticState.hasCustomCape()) {
             return null;
         }
 
-        if (CosmeticState.customCapePath.equals(loadedPath)
-                && capeModel != null) {
+        String wanted = CosmeticState.customCapePath;
+
+        if (wanted.equals(loadedPath) && capeModel != null) {
             return capeModel;
+        }
+
+        if (wanted.equals(failedPath)) {
+            return null;
         }
 
         MinecraftClient client = MinecraftClient.getInstance();
@@ -48,24 +59,29 @@ public final class CosmeticTextureManager {
             return null;
         }
 
-        Path path = Path.of(CosmeticState.customCapePath);
+        NativeImage image = null;
 
-        if (!Files.isRegularFile(path)) {
-            return null;
-        }
+        try {
+            Path path = Path.of(wanted);
 
-        try (var input = Files.newInputStream(path)) {
-            NativeImage image = NativeImage.read(input);
+            if (!Files.isRegularFile(path)) {
+                return fail(wanted, "shadowcosmetics.error.file_missing");
+            }
+
+            try (var input = Files.newInputStream(path)) {
+                image = NativeImage.read(input);
+            }
 
             int width = image.getWidth();
             int height = image.getHeight();
 
-            if (width != 64 || (height != 32 && height != 64)) {
+            if (!CapeFormat.isValidSize(width, height)) {
                 image.close();
-                return null;
+                image = null;
+                return fail(wanted, "shadowcosmetics.error.bad_size");
             }
 
-            invalidate();
+            releaseTexture();
 
             NativeImageBackedTexture texture =
                     new NativeImageBackedTexture(
@@ -73,27 +89,29 @@ public final class CosmeticTextureManager {
                             image
                     );
 
-            textureId = Identifier.of(
-                    "shadowcosmetics",
-                    "dynamic/custom_cape"
-            );
+            // The texture now owns the image.
+            image = null;
 
-            client.getTextureManager().registerTexture(
-                    textureId,
-                    texture
-            );
+            client.getTextureManager().registerTexture(TEXTURE_ID, texture);
+            textureId = TEXTURE_ID;
 
             capeModel = new Model.SinglePartModel(
-                    createCapeGeometry(height),
+                    createCapeGeometry(CapeFormat.logicalHeight(width, height)),
                     RenderLayers::entityCutoutNoCull
             );
 
-            loadedPath = CosmeticState.customCapePath;
+            loadedPath = wanted;
+            failedPath = "";
+            lastError = "";
 
             return capeModel;
 
         } catch (IOException | RuntimeException exception) {
-            return null;
+            if (image != null) {
+                image.close();
+            }
+
+            return fail(wanted, "shadowcosmetics.error.bad_image");
         }
     }
 
@@ -101,10 +119,29 @@ public final class CosmeticTextureManager {
         return textureId;
     }
 
-    /**
-     * Unloads the currently registered texture.
-     */
+    /** Translation key of the last load error, or empty when the last load worked. */
+    public static String lastErrorKey() {
+        return lastError;
+    }
+
+    /** Unloads the texture and forgets any load error so the file is tried again. */
     public static void invalidate() {
+        releaseTexture();
+
+        failedPath = "";
+        lastError = "";
+    }
+
+    private static Model<Unit> fail(String path, String errorKey) {
+        releaseTexture();
+
+        failedPath = path;
+        lastError = errorKey;
+
+        return null;
+    }
+
+    private static void releaseTexture() {
         MinecraftClient client = MinecraftClient.getInstance();
 
         if (textureId != null && client.isOnThread()) {
@@ -117,72 +154,32 @@ public final class CosmeticTextureManager {
     }
 
     /**
-     * Creates the 3D cape geometry.
+     * Builds a vanilla-shaped cape (10 x 16 x 1 pixels) that reads the standard
+     * cape atlas: the outer face comes from the top-left panel of the PNG.
+     *
+     * <p>The model texture grid is always 64 pixels wide, so HD capes
+     * (128x64, 256x128 ...) work by scale alone. {@code logicalHeight} is 32 for
+     * half-height atlases and 64 for square ones.
+     *
+     * <p>The cuboid is built on the far side of the origin and turned half a
+     * turn around the vertical axis, exactly like the vanilla cape model, so the
+     * outer panel faces away from the player's back.
      */
-    private static ModelPart createCapeGeometry(int textureHeight) {
+    private static ModelPart createCapeGeometry(int logicalHeight) {
         ModelData data = new ModelData();
         ModelPartData root = data.getRoot();
 
         root.addChild(
-                "cape_main",
+                "cape",
                 ModelPartBuilder.create()
                         .uv(0, 0)
-                        .cuboid(
-                                -5.0F,
-                                0.0F,
-                                2.2F,
-                                10.0F,
-                                12.0F,
-                                0.65F
-                        ),
-                ModelTransform.NONE
+                        .cuboid(-5.0F, 0.0F, -3.2F, 10.0F, 16.0F, 1.0F),
+                ModelTransform.of(
+                        0.0F, 0.0F, 0.0F,
+                        0.0F, (float) Math.PI, 0.0F
+                )
         );
 
-        root.addChild(
-                "cape_mantle",
-                ModelPartBuilder.create()
-                        .uv(0, 14)
-                        .cuboid(
-                                -5.2F,
-                                -0.2F,
-                                2.0F,
-                                10.4F,
-                                2.0F,
-                                1.0F
-                        ),
-                ModelTransform.NONE
-        );
-
-        root.addChild(
-                "cape_left_trim",
-                ModelPartBuilder.create()
-                        .uv(24, 14)
-                        .cuboid(
-                                -5.0F,
-                                1.0F,
-                                2.91F,
-                                0.55F,
-                                10.5F,
-                                0.12F
-                        ),
-                ModelTransform.NONE
-        );
-
-        root.addChild(
-                "cape_right_trim",
-                ModelPartBuilder.create()
-                        .uv(24, 14)
-                        .cuboid(
-                                4.45F,
-                                1.0F,
-                                2.91F,
-                                0.55F,
-                                10.5F,
-                                0.12F
-                        ),
-                ModelTransform.NONE
-        );
-
-        return root.createPart(64, textureHeight);
+        return root.createPart(64, logicalHeight);
     }
 }

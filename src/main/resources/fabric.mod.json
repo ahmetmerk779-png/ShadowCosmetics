@@ -3,13 +3,21 @@
   "id": "shadowcosmetics",
   "version": "${version}",
   "name": "Shadow Cosmetics",
-  "description": "Client-side cosmetic selection prototype for Minecraft 1.21.11 Fabric.",
-  "authors": ["Shadow Cosmetics"],
-  "contact": {},
+  "description": "Client-side cosmetics for Minecraft 1.21.11: animated 3D capes, hats, wings and halo, online cape search, PNG import and a touch-friendly menu.",
+  "authors": [
+    "ahmetmerk779-png"
+  ],
+  "contact": {
+    "homepage": "https://github.com/ahmetmerk779-png/ShadowCosmetics",
+    "sources": "https://github.com/ahmetmerk779-png/ShadowCosmetics",
+    "issues": "https://github.com/ahmetmerk779-png/ShadowCosmetics/issues"
+  },
   "license": "MIT",
   "environment": "client",
   "entrypoints": {
-    "client": ["dev.shadowcosmetics.ShadowCosmeticsClient"]
+    "client": [
+      "dev.shadowcosmetics.ShadowCosmeticsClient"
+    ]
   },
   "depends": {
     "fabricloader": ">=0.18.1",
